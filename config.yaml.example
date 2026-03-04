@@ -22,8 +22,12 @@ stt:
     model: "~/whisper.cpp/models/ggml-base.bin"
 
 tts:
-  primary: elevenlabs
+  primary: openai  # openai, elevenlabs, o piper
   fallback: piper
+  openai:
+    api_key: "OPENAI_API_KEY"
+    model: tts-1  # tts-1 (rápido) o tts-1-hd (alta calidad)
+    voice: nova   # alloy, echo, fable, onyx, nova, shimmer
   elevenlabs:
     api_key: "ELEVENLABS_API_KEY"
     voice_id: "VOICE_ID"

@@ -11,24 +11,69 @@ log = logging.getLogger("maya.tts")
 
 class TTS:
     def __init__(self, config: dict):
-        self.primary = config.get("primary", "elevenlabs")
+        self.primary = config.get("primary", "openai")
         self.fallback = config.get("fallback", "piper")
         self.eleven_cfg = config.get("elevenlabs", {})
+        self.openai_cfg = config.get("openai", {})
         self.piper_cfg = config.get("piper", {})
 
     def speak(self, text: str) -> str | None:
         """Generate speech from text. Returns path to WAV file or None."""
-        path = None
+        providers = {
+            "openai": self._openai,
+            "elevenlabs": self._elevenlabs,
+            "piper": self._piper,
+        }
 
-        if self.primary == "elevenlabs":
-            path = self._elevenlabs(text)
-            if path is None and self.fallback == "piper":
-                log.warning("ElevenLabs falló, usando Piper")
-                path = self._piper(text)
-        elif self.primary == "piper":
-            path = self._piper(text)
+        primary_fn = providers.get(self.primary)
+        if primary_fn:
+            path = primary_fn(text)
+            if path:
+                return path
+            log.warning("%s falló, intentando fallback %s", self.primary, self.fallback)
 
-        return path
+        fallback_fn = providers.get(self.fallback)
+        if fallback_fn:
+            return fallback_fn(text)
+        return None
+
+    def _openai(self, text: str) -> str | None:
+        """Generate speech using OpenAI TTS API."""
+        api_key = self.openai_cfg.get("api_key", "")
+        if not api_key or api_key == "OPENAI_API_KEY":
+            log.warning("OpenAI TTS API key no configurada")
+            return None
+
+        model = self.openai_cfg.get("model", "tts-1")
+        voice = self.openai_cfg.get("voice", "nova")
+
+        try:
+            response = httpx.post(
+                "https://api.openai.com/v1/audio/speech",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "input": text,
+                    "voice": voice,
+                    "response_format": "mp3",
+                },
+                timeout=30.0,
+            )
+            response.raise_for_status()
+
+            path = tempfile.mktemp(suffix=".mp3", prefix="maya_tts_")
+            with open(path, "wb") as f:
+                f.write(response.content)
+
+            log.info("OpenAI TTS ok (%d bytes, voz=%s)", len(response.content), voice)
+            return path
+
+        except Exception as e:
+            log.error("Error OpenAI TTS: %s", e)
+            return None
 
     def _elevenlabs(self, text: str) -> str | None:
         """Generate speech using ElevenLabs API."""

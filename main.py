@@ -240,7 +240,7 @@ def main():
     if os.path.isfile(ready_sound):
         play_audio(ready_sound)
 
-    startup_path = tts.speak("Hola, soy Maya. Estoy lista para ayudarle.")
+    startup_path = tts.speak("Hola, soy Maya. Estoy lista para ayudarte.")
     if startup_path:
         play_audio(startup_path)
         os.unlink(startup_path)
@@ -306,6 +306,13 @@ def main():
                     display.set_user(user_name)
                     log.info("Hablante: %s", user_name)
 
+            # Default user when speaker_id is disabled
+            if not user_id:
+                users = config.get("users", {})
+                user_id = list(users.keys())[0] if users else "default"
+                user_name = users.get(user_id, {}).get("real_name", "Usuario")
+                db.ensure_user(user_id, user_name)
+
             # e. Transcribe
             display.set_status("Procesando...", "#f0a500")
             wav_path = save_wav(audio, audio_cfg.get("sample_rate", 16000))
@@ -354,6 +361,52 @@ def main():
 
             # k. Update reminders display
             update_reminders_display(db, display)
+
+            # l. Follow-up: always listen briefly after responding
+            log.info("Esperando follow-up...")
+            display.set_status("Escuchando...", "#e94560")
+            display.enable_talk_btn(False)
+
+            followup_audio = record_until_silence(
+                sample_rate=audio_cfg.get("sample_rate", 16000),
+                silence_threshold=audio_cfg.get("silence_threshold", 500),
+                silence_duration=audio_cfg.get("silence_duration", 1.5),
+                max_seconds=audio_cfg.get("max_record_seconds", 30),
+                initial_wait=5.0,
+            )
+
+            if followup_audio is not None:
+                display.set_status("Procesando...", "#f0a500")
+                fw_path = save_wav(followup_audio, audio_cfg.get("sample_rate", 16000))
+                fw_text = stt.transcribe(fw_path)
+                os.unlink(fw_path)
+
+                if fw_text:
+                    display.set_transcript(fw_text)
+                    log.info("Follow-up: %s", fw_text)
+                    if user_id:
+                        db.save_conversation(user_id, "user", fw_text)
+
+                    display.set_status("Pensando...", "#f0a500")
+                    fw_response, fw_actions = llm.chat(fw_text, user_name, db, user_id)
+
+                    if fw_actions:
+                        fw_results = execute_actions(fw_actions, user_id or "unknown", db, telegram)
+                        for r in fw_results:
+                            log.info("Accion follow-up: %s", r)
+
+                    display.set_status("Hablando...", "#e94560")
+                    display.set_response(fw_response)
+                    fw_tts = tts.speak(fw_response)
+                    if fw_tts:
+                        play_audio(fw_tts)
+                        os.unlink(fw_tts)
+
+                    if user_id:
+                        db.save_conversation(user_id, "assistant", fw_response)
+                    update_reminders_display(db, display)
+            else:
+                log.info("No hubo follow-up")
 
         except Exception as e:
             log.error("Error en loop principal: %s", e, exc_info=True)

@@ -88,6 +88,14 @@ class TelegramBot:
             return
         if self._polling:
             return
+
+        # Clear any existing webhook/polling session
+        try:
+            httpx.post(f"{self.base_url}/deleteWebhook",
+                       json={"drop_pending_updates": True}, timeout=5.0)
+        except Exception:
+            pass
+
         self._polling = True
         self._poll_thread = threading.Thread(target=self._poll_loop, daemon=True)
         self._poll_thread.start()

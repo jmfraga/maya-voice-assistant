@@ -72,40 +72,60 @@ def record_until_silence(
     silence_duration: float = 1.5,
     max_seconds: float = 30,
     device: int | None = None,
+    initial_wait: float = 0.0,
 ) -> np.ndarray | None:
-    """Record audio until silence is detected. Returns numpy array or None."""
-    chunk_duration = 0.1  # 100ms chunks
-    chunk_samples = int(sample_rate * chunk_duration)
-    max_chunks = int(max_seconds / chunk_duration)
+    """Record audio until silence is detected. Uses pw-record for BT mic support.
 
-    frames = []
-    silent_chunks = 0
-    silent_chunks_needed = int(silence_duration / chunk_duration)
-    has_speech = False
-    speech_threshold_chunks = 3  # Need at least 3 non-silent chunks
+    initial_wait: seconds to wait for speech before giving up (0 = no limit,
+                  used for follow-up listening where user may not speak).
+    """
+    import io
 
-    log.info("Grabando... (umbral silencio=%s, max=%ss)", silence_threshold, max_seconds)
+    log.info("Grabando... (umbral silencio=%s, max=%ss, espera=%.1fs)",
+             silence_threshold, max_seconds, initial_wait)
 
     try:
-        stream = sd.InputStream(
-            samplerate=sample_rate,
-            channels=1,
-            dtype="int16",
-            blocksize=chunk_samples,
-            device=device,
+        # Use pw-record to capture from PipeWire (sees BT mic)
+        proc = subprocess.Popen(
+            ["pw-record", "--format=s16", "--rate=%d" % sample_rate,
+             "--channels=1", "-"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
         )
-        stream.start()
+
+        chunk_duration = 0.1  # 100ms
+        chunk_bytes = int(sample_rate * chunk_duration) * 2  # 16-bit = 2 bytes/sample
+        max_chunks = int(max_seconds / chunk_duration)
+        silent_chunks_needed = int(silence_duration / chunk_duration)
+        initial_wait_chunks = int(initial_wait / chunk_duration) if initial_wait > 0 else 0
+
+        frames = []
+        silent_chunks = 0
+        has_speech = False
+        speech_threshold_chunks = 3
+        total_chunks = 0
 
         for _ in range(max_chunks):
-            data, overflowed = stream.read(chunk_samples)
-            if overflowed:
-                log.warning("Audio buffer overflow")
+            raw = proc.stdout.read(chunk_bytes)
+            if not raw or len(raw) < chunk_bytes:
+                break
 
+            total_chunks += 1
+            data = np.frombuffer(raw, dtype=np.int16)
             frames.append(data.copy())
             rms = np.sqrt(np.mean(data.astype(np.float32) ** 2))
 
             if rms < silence_threshold:
                 silent_chunks += 1
+                # If waiting for follow-up and no speech after initial_wait, give up
+                if initial_wait_chunks > 0 and not has_speech and total_chunks >= initial_wait_chunks:
+                    log.info("Sin follow-up tras %.1fs", initial_wait)
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                    return None
                 if has_speech and silent_chunks >= silent_chunks_needed:
                     log.info("Silencio detectado, fin de grabacion")
                     break
@@ -115,14 +135,19 @@ def record_until_silence(
                 if speech_threshold_chunks <= 0:
                     has_speech = True
 
-        stream.stop()
-        stream.close()
+        proc.terminate()
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            proc.kill()
 
         if not has_speech:
             log.info("No se detecto voz")
             return None
 
-        audio = np.concatenate(frames, axis=0)
+        audio = np.concatenate(frames)
+        # Reshape to (N, 1) for consistency with save_wav
+        audio = audio.reshape(-1, 1)
         log.info("Grabados %.1f segundos", len(audio) / sample_rate)
         return audio
 
