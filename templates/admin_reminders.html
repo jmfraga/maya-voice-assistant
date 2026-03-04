@@ -1,0 +1,64 @@
+{% extends "admin_base.html" %}
+{% block title_extra %} - Recordatorios{% endblock %}
+{% block content %}
+<div class="card">
+    <h2>Recordatorios de {{ user.real_name }}</h2>
+    <div style="margin-bottom:12px">
+        <a href="/medications/{{ user.id }}">Medicamentos</a> |
+        <a href="/contacts/{{ user.id }}">Contactos</a> |
+        <a href="/log/{{ user.id }}">Historial</a>
+    </div>
+
+    {% if reminders %}
+    <table>
+        <tr><th>Hora</th><th>Texto</th><th>Recurrente</th><th>Estado</th><th></th></tr>
+        {% for r in reminders %}
+        <tr>
+            <form method="post" action="/reminders/edit/{{ r.id }}">
+                <input type="hidden" name="user_id" value="{{ user.id }}">
+                <td><input name="remind_at" value="{{ r.remind_at }}" style="width:80px"></td>
+                <td><input name="text" value="{{ r.text }}" style="width:100%"></td>
+                <td><input name="recurring" value="{{ r.recurring or '' }}" placeholder="diario, L-V..." style="width:100px"></td>
+                <td>
+                    <label><input type="checkbox" name="active" {% if r.active %}checked{% endif %}> Activo</label>
+                </td>
+                <td class="actions">
+                    <button type="submit" class="btn btn-primary btn-small">Guardar</button>
+            </form>
+            <form method="post" action="/reminders/delete/{{ r.id }}" style="display:inline"
+                  onsubmit="return confirm('Eliminar recordatorio?')">
+                <input type="hidden" name="user_id" value="{{ user.id }}">
+                <button type="submit" class="btn btn-danger btn-small">X</button>
+            </form>
+                </td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p style="color:#8899aa">No hay recordatorios activos.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>Agregar recordatorio</h2>
+    <form method="post" action="/reminders/{{ user.id }}/add">
+        <div class="form-row">
+            <div class="form-group">
+                <label>Hora (HH:MM)</label>
+                <input name="remind_at" required placeholder="08:00" pattern="\d{2}:\d{2}">
+            </div>
+            <div class="form-group" style="flex:3">
+                <label>Texto</label>
+                <input name="text" required placeholder="Tomar medicamento">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Recurrente (opcional)</label>
+                <input name="recurring" placeholder="diario, L-V, lunes...">
+            </div>
+            <button type="submit" class="btn btn-primary">Agregar</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

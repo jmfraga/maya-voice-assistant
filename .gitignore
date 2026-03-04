@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+data/
+logs/
+voiceprints/*.npy
+*.ppn
+config.yaml

@@ -1,0 +1,66 @@
+{% extends "admin_base.html" %}
+{% block title_extra %} - Contactos{% endblock %}
+{% block content %}
+<div class="card">
+    <h2>Contactos de {{ user.real_name }}</h2>
+    <div style="margin-bottom:12px">
+        <a href="/medications/{{ user.id }}">Medicamentos</a> |
+        <a href="/reminders/{{ user.id }}">Recordatorios</a> |
+        <a href="/log/{{ user.id }}">Historial</a>
+    </div>
+
+    {% if contacts %}
+    <table>
+        <tr><th>Nombre</th><th>Relacion</th><th>Telefono</th><th>Telegram ID</th><th></th></tr>
+        {% for c in contacts %}
+        <tr>
+            <form method="post" action="/contacts/edit/{{ c.id }}">
+                <input type="hidden" name="user_id" value="{{ user.id }}">
+                <td><input name="name" value="{{ c.name }}" style="width:100%"></td>
+                <td><input name="relationship" value="{{ c.relationship or '' }}" style="width:100%"></td>
+                <td><input name="phone" value="{{ c.phone or '' }}" style="width:100%"></td>
+                <td><input name="telegram_chat_id" value="{{ c.telegram_chat_id or '' }}" style="width:100%"></td>
+                <td class="actions">
+                    <button type="submit" class="btn btn-primary btn-small">Guardar</button>
+            </form>
+            <form method="post" action="/contacts/delete/{{ c.id }}" style="display:inline"
+                  onsubmit="return confirm('Eliminar {{ c.name }}?')">
+                <input type="hidden" name="user_id" value="{{ user.id }}">
+                <button type="submit" class="btn btn-danger btn-small">X</button>
+            </form>
+                </td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p style="color:#8899aa">No hay contactos registrados.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>Agregar contacto</h2>
+    <form method="post" action="/contacts/{{ user.id }}/add">
+        <div class="form-row">
+            <div class="form-group">
+                <label>Nombre</label>
+                <input name="name" required placeholder="Juan">
+            </div>
+            <div class="form-group">
+                <label>Relacion</label>
+                <input name="relationship" placeholder="Hijo">
+            </div>
+            <div class="form-group">
+                <label>Telefono</label>
+                <input name="phone" placeholder="+52 55 1234 5678">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Telegram Chat ID</label>
+                <input name="telegram_chat_id" type="number" placeholder="123456789">
+            </div>
+            <button type="submit" class="btn btn-primary">Agregar</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

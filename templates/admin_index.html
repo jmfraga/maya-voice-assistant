@@ -1,0 +1,66 @@
+{% extends "admin_base.html" %}
+{% block content %}
+<div class="stats">
+    <div class="stat">
+        <div class="stat-num">{{ stats.users }}</div>
+        <div class="stat-label">Usuarios</div>
+    </div>
+    <div class="stat">
+        <div class="stat-num">{{ stats.reminders }}</div>
+        <div class="stat-label">Recordatorios activos</div>
+    </div>
+    {% if stats.pending_contacts > 0 %}
+    <a href="/pending" style="text-decoration:none">
+        <div class="stat" style="border:2px solid #e94560">
+            <div class="stat-num" style="color:#e94560">{{ stats.pending_contacts }}</div>
+            <div class="stat-label">Solicitudes pendientes</div>
+        </div>
+    </a>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>Usuarios</h2>
+    <div class="user-list">
+        {% for u in users %}
+        <div class="user-card">
+            <div style="display:flex;align-items:center;gap:4px;margin-bottom:4px">
+                <form method="post" action="/users/edit/{{ u.id }}" style="display:flex;align-items:center;gap:4px">
+                    <input name="real_name" value="{{ u.real_name }}" style="font-size:1.1em;font-weight:bold;width:120px;background:#1a1a2e;border:1px solid transparent;color:#e8e8e8;padding:2px 6px;border-radius:4px"
+                           onfocus="this.style.borderColor='#4ecca3'" onblur="this.style.borderColor='transparent'">
+                    <button type="submit" class="btn btn-primary btn-small" style="padding:2px 8px;font-size:0.75em">OK</button>
+                </form>
+                <form method="post" action="/users/delete/{{ u.id }}" style="display:inline"
+                      onsubmit="return confirm('Eliminar {{ u.real_name }} y todos sus datos?')">
+                    <button type="submit" class="btn btn-danger btn-small" style="padding:2px 8px;font-size:0.75em">X</button>
+                </form>
+            </div>
+            <small style="color:#8899aa">ID: {{ u.id }}</small>
+            <div class="user-links">
+                <a href="/medications/{{ u.id }}">Medicamentos</a>
+                <a href="/pending">Contactos</a>
+                <a href="/reminders/{{ u.id }}">Recordatorios</a>
+                <a href="/log/{{ u.id }}">Historial</a>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<div class="card">
+    <h2>Agregar usuario</h2>
+    <form method="post" action="/users/add">
+        <div class="form-row">
+            <div class="form-group">
+                <label>ID (ej: mama, papa)</label>
+                <input name="id" required placeholder="mama">
+            </div>
+            <div class="form-group">
+                <label>Nombre</label>
+                <input name="real_name" required placeholder="Mamá">
+            </div>
+            <button type="submit" class="btn btn-primary">Agregar</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

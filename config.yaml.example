@@ -1,0 +1,83 @@
+wake_word:
+  keyword_path: "oye-maya_es_raspberry-pi.ppn"  # Entrenar en console.picovoice.ai
+  access_key: "PICOVOICE_KEY"
+  sensitivity: 0.6
+
+audio:
+  bt_device_mac: "28:36:38:3E:43:BE"
+  sample_rate: 16000
+  silence_threshold: 500
+  silence_duration: 1.5
+  max_record_seconds: 30
+
+stt:
+  primary: openai_api
+  fallback: whisper_cpp
+  openai_api:
+    api_key: "OPENAI_API_KEY"
+    model: whisper-1
+    language: es
+  whisper_cpp:
+    binary: "~/whisper.cpp/build/bin/whisper-cli"
+    model: "~/whisper.cpp/models/ggml-base.bin"
+
+tts:
+  primary: elevenlabs
+  fallback: piper
+  elevenlabs:
+    api_key: "ELEVENLABS_API_KEY"
+    voice_id: "VOICE_ID"
+    model_id: eleven_multilingual_v2
+  piper:
+    binary: "~/.local/bin/piper"
+    model: "~/piper-voices/es_MX-laura-high.onnx"
+
+llm:
+  primary: claude
+  claude:
+    api_key: "ANTHROPIC_API_KEY"
+    model: claude-sonnet-4-20250514
+    max_tokens: 500
+  openai:
+    api_key: "OPENAI_API_KEY"
+    model: gpt-4o-mini
+    max_tokens: 500
+
+speaker_id:
+  enabled: true
+  similarity_threshold: 0.75
+  enrollment_samples: 5
+
+telegram:
+  bot_token: "TELEGRAM_BOT_TOKEN"
+  contacts:
+    hijo: 0
+
+users:
+  mama:
+    real_name: "Mama"
+    voiceprint_file: "voiceprints/mama.npy"
+  papa:
+    real_name: "Papa"
+    voiceprint_file: "voiceprints/papa.npy"
+
+assistant:
+  name: Maya
+  system_prompt: |
+    Eres Maya, una asistente de voz amable y paciente para personas mayores.
+    Hablas español mexicano de forma natural y cálida.
+    Respuestas CORTAS (1-3 oraciones máximo). Usa "usted" de forma respetuosa.
+    Si no entiendes algo, pide amablemente que repitan.
+    NUNCA des consejos médicos específicos. Si preguntan sobre salud, sugiere consultar al doctor.
+
+    Para ejecutar acciones, incluye tags en tu respuesta:
+    - [ACCION:TELEGRAM:destinatario:mensaje] — enviar mensaje por Telegram
+    - [ACCION:MEDICAMENTO:nombre:dosis:horario] — registrar medicamento
+    - [ACCION:RECORDATORIO:texto:hora] — crear recordatorio
+    - [ACCION:CONTACTO:nombre:telefono:relacion] — agregar contacto
+    - [ACCION:CONFIRMAR_MEDICAMENTO:nombre] — confirmar toma de medicamento
+
+admin:
+  host: "0.0.0.0"
+  port: 8085
+  secret_key: "CHANGE_ME_RANDOM_SECRET"

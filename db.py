@@ -1,0 +1,367 @@
+"""SQLite database for users, medications, contacts, reminders, conversations."""
+
+import sqlite3
+import os
+import logging
+from datetime import datetime
+
+log = logging.getLogger("maya.db")
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    real_name TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS medications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    name TEXT NOT NULL,
+    dosage TEXT,
+    schedule TEXT,
+    notes TEXT,
+    active INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS contacts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    name TEXT NOT NULL,
+    telegram_chat_id INTEGER,
+    relationship TEXT,
+    phone TEXT,
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS reminders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    text TEXT NOT NULL,
+    remind_at TEXT NOT NULL,
+    recurring TEXT,
+    active INTEGER DEFAULT 1,
+    last_triggered TEXT,
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS conversations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS medication_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    medication_id INTEGER REFERENCES medications(id),
+    user_id TEXT NOT NULL REFERENCES users(id),
+    taken_at TEXT DEFAULT (datetime('now', 'localtime')),
+    confirmed INTEGER DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS pending_contacts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    relationship TEXT NOT NULL,
+    status TEXT DEFAULT 'pending',
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+"""
+
+
+class Database:
+    def __init__(self, db_path: str):
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        self.db_path = db_path
+        self._init_db()
+
+    def _conn(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        return conn
+
+    def _init_db(self):
+        with self._conn() as conn:
+            conn.executescript(SCHEMA)
+        log.info("DB inicializada: %s", self.db_path)
+
+    # --- Users ---
+    def ensure_user(self, user_id: str, real_name: str):
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO users (id, real_name) VALUES (?, ?)",
+                (user_id, real_name),
+            )
+
+    def update_user(self, user_id: str, real_name: str):
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE users SET real_name = ? WHERE id = ?",
+                (real_name, user_id),
+            )
+
+    def delete_user(self, user_id: str):
+        with self._conn() as conn:
+            conn.execute("DELETE FROM conversations WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM medication_log WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM reminders WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM contacts WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM medications WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+            log.info("Usuario eliminado: %s", user_id)
+
+    def get_users(self) -> list[dict]:
+        with self._conn() as conn:
+            rows = conn.execute("SELECT * FROM users ORDER BY real_name").fetchall()
+            return [dict(r) for r in rows]
+
+    # --- Medications ---
+    def add_medication(self, user_id: str, name: str, dosage: str = "",
+                       schedule: str = "", notes: str = "") -> int:
+        with self._conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO medications (user_id, name, dosage, schedule, notes) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (user_id, name, dosage, schedule, notes),
+            )
+            log.info("Medicamento agregado: %s para %s", name, user_id)
+            return cur.lastrowid
+
+    def get_medications(self, user_id: str, active_only: bool = True) -> list[dict]:
+        with self._conn() as conn:
+            q = "SELECT * FROM medications WHERE user_id = ?"
+            params = [user_id]
+            if active_only:
+                q += " AND active = 1"
+            rows = conn.execute(q + " ORDER BY name", params).fetchall()
+            return [dict(r) for r in rows]
+
+    def update_medication(self, med_id: int, **kwargs):
+        allowed = {"name", "dosage", "schedule", "notes", "active"}
+        fields = {k: v for k, v in kwargs.items() if k in allowed}
+        if not fields:
+            return
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        vals = list(fields.values()) + [med_id]
+        with self._conn() as conn:
+            conn.execute(f"UPDATE medications SET {sets} WHERE id = ?", vals)
+
+    def delete_medication(self, med_id: int):
+        with self._conn() as conn:
+            conn.execute("DELETE FROM medications WHERE id = ?", (med_id,))
+
+    def confirm_medication(self, medication_id: int, user_id: str):
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO medication_log (medication_id, user_id) VALUES (?, ?)",
+                (medication_id, user_id),
+            )
+            log.info("Medicamento %d confirmado por %s", medication_id, user_id)
+
+    def confirm_medication_by_name(self, name: str, user_id: str) -> bool:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT id FROM medications WHERE user_id = ? AND name LIKE ? AND active = 1",
+                (user_id, f"%{name}%"),
+            ).fetchone()
+            if row:
+                conn.execute(
+                    "INSERT INTO medication_log (medication_id, user_id) VALUES (?, ?)",
+                    (row["id"], user_id),
+                )
+                return True
+            return False
+
+    def get_medication_log(self, user_id: str, date: str | None = None) -> list[dict]:
+        with self._conn() as conn:
+            q = """SELECT ml.*, m.name as med_name, m.dosage
+                   FROM medication_log ml JOIN medications m ON ml.medication_id = m.id
+                   WHERE ml.user_id = ?"""
+            params = [user_id]
+            if date:
+                q += " AND DATE(ml.taken_at) = ?"
+                params.append(date)
+            q += " ORDER BY ml.taken_at DESC"
+            return [dict(r) for r in conn.execute(q, params).fetchall()]
+
+    # --- Contacts ---
+    def add_contact(self, user_id: str, name: str, telegram_chat_id: int = 0,
+                    relationship: str = "", phone: str = "") -> int:
+        with self._conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO contacts (user_id, name, telegram_chat_id, relationship, phone) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (user_id, name, telegram_chat_id, relationship, phone),
+            )
+            return cur.lastrowid
+
+    def get_contacts(self, user_id: str) -> list[dict]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM contacts WHERE user_id = ? ORDER BY name",
+                (user_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def update_contact(self, contact_id: int, **kwargs):
+        allowed = {"name", "telegram_chat_id", "relationship", "phone"}
+        fields = {k: v for k, v in kwargs.items() if k in allowed}
+        if not fields:
+            return
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        vals = list(fields.values()) + [contact_id]
+        with self._conn() as conn:
+            conn.execute(f"UPDATE contacts SET {sets} WHERE id = ?", vals)
+
+    def delete_contact(self, contact_id: int):
+        with self._conn() as conn:
+            conn.execute("DELETE FROM contacts WHERE id = ?", (contact_id,))
+
+    # --- Reminders ---
+    def add_reminder(self, user_id: str, text: str, remind_at: str,
+                     recurring: str = "") -> int:
+        with self._conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO reminders (user_id, text, remind_at, recurring) "
+                "VALUES (?, ?, ?, ?)",
+                (user_id, text, remind_at, recurring),
+            )
+            log.info("Recordatorio creado: '%s' para %s a las %s", text, user_id, remind_at)
+            return cur.lastrowid
+
+    def get_pending_reminders(self, user_id: str) -> list[dict]:
+        now = datetime.now().strftime("%H:%M")
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM reminders WHERE user_id = ? AND active = 1 "
+                "AND remind_at >= ? ORDER BY remind_at",
+                (user_id, now),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_all_active_reminders(self) -> list[dict]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT r.*, u.real_name FROM reminders r "
+                "JOIN users u ON r.user_id = u.id "
+                "WHERE r.active = 1 ORDER BY r.remind_at"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_due_reminders(self) -> list[dict]:
+        now = datetime.now().strftime("%H:%M")
+        today = datetime.now().strftime("%Y-%m-%d")
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT r.*, u.real_name FROM reminders r "
+                "JOIN users u ON r.user_id = u.id "
+                "WHERE r.active = 1 AND r.remind_at <= ? "
+                "AND (r.last_triggered IS NULL OR DATE(r.last_triggered) < ?)",
+                (now, today),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def mark_reminder_triggered(self, reminder_id: int):
+        now = datetime.now().isoformat()
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE reminders SET last_triggered = ? WHERE id = ?",
+                (now, reminder_id),
+            )
+            # Deactivate non-recurring
+            conn.execute(
+                "UPDATE reminders SET active = 0 WHERE id = ? AND (recurring IS NULL OR recurring = '')",
+                (reminder_id,),
+            )
+
+    def update_reminder(self, rem_id: int, **kwargs):
+        allowed = {"text", "remind_at", "recurring", "active"}
+        fields = {k: v for k, v in kwargs.items() if k in allowed}
+        if not fields:
+            return
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        vals = list(fields.values()) + [rem_id]
+        with self._conn() as conn:
+            conn.execute(f"UPDATE reminders SET {sets} WHERE id = ?", vals)
+
+    def delete_reminder(self, rem_id: int):
+        with self._conn() as conn:
+            conn.execute("DELETE FROM reminders WHERE id = ?", (rem_id,))
+
+    # --- Conversations ---
+    def save_conversation(self, user_id: str, role: str, content: str):
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO conversations (user_id, role, content) VALUES (?, ?, ?)",
+                (user_id, role, content),
+            )
+
+    def get_recent_conversations(self, user_id: str, limit: int = 10) -> list[dict]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM conversations WHERE user_id = ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (user_id, limit),
+            ).fetchall()
+            return [dict(r) for r in reversed(rows)]
+
+    # --- Pending Contacts (Telegram self-registration) ---
+    def add_pending_contact(self, chat_id: int, name: str, relationship: str) -> int:
+        with self._conn() as conn:
+            cur = conn.execute(
+                "INSERT OR REPLACE INTO pending_contacts (chat_id, name, relationship, status) "
+                "VALUES (?, ?, ?, 'pending')",
+                (chat_id, name, relationship),
+            )
+            log.info("Solicitud de contacto: %s (%s), chat_id=%d", name, relationship, chat_id)
+            return cur.lastrowid
+
+    def get_pending_contacts(self) -> list[dict]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM pending_contacts WHERE status = 'pending' ORDER BY created_at DESC"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_all_pending_contacts(self) -> list[dict]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM pending_contacts ORDER BY created_at DESC"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def approve_pending_contact(self, pending_id: int) -> dict | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM pending_contacts WHERE id = ?", (pending_id,)
+            ).fetchone()
+            if not row:
+                return None
+            conn.execute(
+                "UPDATE pending_contacts SET status = 'approved' WHERE id = ?",
+                (pending_id,),
+            )
+            return dict(row)
+
+    def reject_pending_contact(self, pending_id: int):
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE pending_contacts SET status = 'rejected' WHERE id = ?",
+                (pending_id,),
+            )
+
+    def is_chat_id_registered(self, chat_id: int) -> bool:
+        """Check if chat_id exists in contacts or has a pending request."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM contacts WHERE telegram_chat_id = ? "
+                "UNION SELECT 1 FROM pending_contacts WHERE chat_id = ? AND status = 'pending'",
+                (chat_id, chat_id),
+            ).fetchone()
+            return row is not None

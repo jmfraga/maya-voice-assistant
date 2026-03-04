@@ -1,0 +1,27 @@
+{% extends "admin_base.html" %}
+{% block title_extra %} - Historial{% endblock %}
+{% block content %}
+<div class="card">
+    <h2>Historial de medicamentos de {{ user.real_name }}</h2>
+    <div style="margin-bottom:12px">
+        <a href="/medications/{{ user.id }}">Medicamentos</a> |
+        <a href="/contacts/{{ user.id }}">Contactos</a> |
+        <a href="/reminders/{{ user.id }}">Recordatorios</a>
+    </div>
+
+    {% if logs %}
+    <table>
+        <tr><th>Fecha/Hora</th><th>Medicamento</th><th>Dosis</th></tr>
+        {% for l in logs %}
+        <tr>
+            <td>{{ l.taken_at }}</td>
+            <td>{{ l.med_name }}</td>
+            <td>{{ l.dosage or '-' }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p style="color:#8899aa">No hay registros de toma de medicamentos.</p>
+    {% endif %}
+</div>
+{% endblock %}

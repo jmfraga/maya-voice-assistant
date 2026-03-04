@@ -1,0 +1,100 @@
+{% extends "admin_base.html" %}
+{% block title_extra %} - Contactos{% endblock %}
+{% block content %}
+
+{% set pending_list = pending | selectattr('status', 'equalto', 'pending') | list %}
+
+<!-- Pending requests -->
+{% if pending_list %}
+<div class="card" style="border-left: 3px solid #e94560">
+    <h2>Solicitudes nuevas ({{ pending_list | length }})</h2>
+    <p style="color:#8899aa;font-size:0.85em;margin-bottom:12px">
+        Escribieron /start a @AbuelosFragaBot y quieren registrarse.
+    </p>
+    <table>
+        <tr><th>Nombre</th><th>Relacion</th><th>Asignar a</th><th></th></tr>
+        {% for p in pending_list %}
+        <tr>
+            <td><strong>{{ p.name }}</strong></td>
+            <td>{{ p.relationship }}</td>
+            <td>
+                <form method="post" action="/pending/approve/{{ p.id }}" style="display:inline">
+                    {% for u in users %}
+                    <label style="margin-right:8px"><input type="checkbox" name="user_ids" value="{{ u.id }}" checked> {{ u.real_name }}</label>
+                    {% endfor %}
+                    <button type="submit" class="btn btn-primary btn-small">Aprobar</button>
+                </form>
+            </td>
+            <td>
+                <form method="post" action="/pending/reject/{{ p.id }}" style="display:inline"
+                      onsubmit="return confirm('Rechazar a {{ p.name }}?')">
+                    <button type="submit" class="btn btn-danger btn-small">Rechazar</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </table>
+</div>
+{% endif %}
+
+<!-- All registered contacts grouped by user -->
+{% for u in users %}
+<div class="card">
+    <h2>Contactos de {{ u.real_name }}</h2>
+    {% set user_contacts = all_contacts.get(u.id, []) %}
+    {% if user_contacts %}
+    <table>
+        <tr><th>Nombre</th><th>Relacion</th><th>Telefono</th><th>Telegram ID</th><th></th></tr>
+        {% for c in user_contacts %}
+        <tr>
+            <form method="post" action="/contacts/edit/{{ c.id }}">
+                <input type="hidden" name="user_id" value="{{ u.id }}">
+                <input type="hidden" name="redirect" value="pending">
+                <td><input name="name" value="{{ c.name }}" style="width:100%"></td>
+                <td><input name="relationship" value="{{ c.relationship or '' }}" style="width:100%"></td>
+                <td><input name="phone" value="{{ c.phone or '' }}" style="width:100%"></td>
+                <td><input name="telegram_chat_id" value="{{ c.telegram_chat_id or '' }}" style="width:90px"></td>
+                <td class="actions">
+                    <button type="submit" class="btn btn-primary btn-small">Guardar</button>
+            </form>
+            <form method="post" action="/contacts/delete/{{ c.id }}" style="display:inline"
+                  onsubmit="return confirm('Eliminar {{ c.name }}?')">
+                <input type="hidden" name="user_id" value="{{ u.id }}">
+                <input type="hidden" name="redirect" value="pending">
+                <button type="submit" class="btn btn-danger btn-small">X</button>
+            </form>
+                </td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p style="color:#8899aa">Sin contactos.</p>
+    {% endif %}
+
+    <!-- Add contact inline -->
+    <form method="post" action="/contacts/{{ u.id }}/add" style="margin-top:10px">
+        <input type="hidden" name="redirect" value="pending">
+        <div class="form-row">
+            <div class="form-group"><label>Nombre</label><input name="name" required placeholder="Juan"></div>
+            <div class="form-group"><label>Relacion</label><input name="relationship" placeholder="Hijo"></div>
+            <div class="form-group"><label>Telefono</label><input name="phone" placeholder="+52 55..."></div>
+            <div class="form-group"><label>Telegram ID</label><input name="telegram_chat_id" type="number" placeholder="Auto si usa /start"></div>
+            <button type="submit" class="btn btn-primary" style="align-self:end">Agregar</button>
+        </div>
+    </form>
+</div>
+{% endfor %}
+
+<!-- How it works -->
+<div class="card">
+    <h2>Registro automatico por Telegram</h2>
+    <div style="color:#8899aa;font-size:0.9em;line-height:1.6">
+        <p>1. El familiar busca <strong>@AbuelosFragaBot</strong> en Telegram y escribe <strong>/start</strong></p>
+        <p>2. El bot le pide su nombre y relacion con los Abuelos Fraga</p>
+        <p>3. La solicitud aparece arriba para aprobar o rechazar</p>
+        <p>4. Al aprobar, se registra como contacto y se le notifica</p>
+        <p style="margin-top:8px">Tambien puedes agregar contactos manualmente con el formulario de cada usuario.</p>
+    </div>
+</div>
+
+{% endblock %}

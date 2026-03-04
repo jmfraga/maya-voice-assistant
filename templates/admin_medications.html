@@ -1,0 +1,69 @@
+{% extends "admin_base.html" %}
+{% block title_extra %} - Medicamentos{% endblock %}
+{% block content %}
+<div class="card">
+    <h2>Medicamentos de {{ user.real_name }}</h2>
+    <div style="margin-bottom:12px">
+        <a href="/contacts/{{ user.id }}">Contactos</a> |
+        <a href="/reminders/{{ user.id }}">Recordatorios</a> |
+        <a href="/log/{{ user.id }}">Historial</a>
+    </div>
+
+    {% if medications %}
+    <table>
+        <tr><th>Nombre</th><th>Dosis</th><th>Horario</th><th>Notas</th><th>Estado</th><th></th></tr>
+        {% for m in medications %}
+        <tr>
+            <form method="post" action="/medications/edit/{{ m.id }}">
+                <input type="hidden" name="user_id" value="{{ user.id }}">
+                <td><input name="name" value="{{ m.name }}" style="width:100%"></td>
+                <td><input name="dosage" value="{{ m.dosage or '' }}" style="width:100%"></td>
+                <td><input name="schedule" value="{{ m.schedule or '' }}" style="width:100%"></td>
+                <td><input name="notes" value="{{ m.notes or '' }}" style="width:100%"></td>
+                <td>
+                    <label><input type="checkbox" name="active" {% if m.active %}checked{% endif %}> Activo</label>
+                </td>
+                <td class="actions">
+                    <button type="submit" class="btn btn-primary btn-small">Guardar</button>
+            </form>
+            <form method="post" action="/medications/delete/{{ m.id }}" style="display:inline"
+                  onsubmit="return confirm('Eliminar {{ m.name }}?')">
+                <input type="hidden" name="user_id" value="{{ user.id }}">
+                <button type="submit" class="btn btn-danger btn-small">X</button>
+            </form>
+                </td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p style="color:#8899aa">No hay medicamentos registrados.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>Agregar medicamento</h2>
+    <form method="post" action="/medications/{{ user.id }}/add">
+        <div class="form-row">
+            <div class="form-group">
+                <label>Nombre</label>
+                <input name="name" required placeholder="Metformina">
+            </div>
+            <div class="form-group">
+                <label>Dosis</label>
+                <input name="dosage" placeholder="500mg">
+            </div>
+            <div class="form-group">
+                <label>Horario</label>
+                <input name="schedule" placeholder="8:00, 20:00">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Notas</label>
+                <input name="notes" placeholder="Tomar con alimentos">
+            </div>
+            <button type="submit" class="btn btn-primary">Agregar</button>
+        </div>
+    </form>
+</div>
+{% endblock %}
