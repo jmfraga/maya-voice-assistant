@@ -70,6 +70,15 @@ CREATE TABLE IF NOT EXISTS pending_contacts (
     status TEXT DEFAULT 'pending',
     created_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
+
+CREATE TABLE IF NOT EXISTS memories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    category TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now', 'localtime')),
+    updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
 """
 
 
@@ -108,6 +117,7 @@ class Database:
 
     def delete_user(self, user_id: str):
         with self._conn() as conn:
+            conn.execute("DELETE FROM memories WHERE user_id = ?", (user_id,))
             conn.execute("DELETE FROM conversations WHERE user_id = ?", (user_id,))
             conn.execute("DELETE FROM medication_log WHERE user_id = ?", (user_id,))
             conn.execute("DELETE FROM reminders WHERE user_id = ?", (user_id,))
@@ -310,6 +320,44 @@ class Database:
                 (user_id, limit),
             ).fetchall()
             return [dict(r) for r in reversed(rows)]
+
+    # --- Memories ---
+    def save_memory(self, user_id: str, category: str, content: str):
+        """Save a memory, deduplicating by substring match in same category."""
+        with self._conn() as conn:
+            existing = conn.execute(
+                "SELECT id, content FROM memories WHERE user_id = ? AND category = ?",
+                (user_id, category),
+            ).fetchall()
+            # Check for similar existing memory (substring match)
+            for row in existing:
+                if content.lower() in row["content"].lower() or row["content"].lower() in content.lower():
+                    conn.execute(
+                        "UPDATE memories SET content = ?, updated_at = datetime('now', 'localtime') WHERE id = ?",
+                        (content, row["id"]),
+                    )
+                    log.info("Memoria actualizada [%s]: %s", category, content)
+                    return
+            conn.execute(
+                "INSERT INTO memories (user_id, category, content) VALUES (?, ?, ?)",
+                (user_id, category, content),
+            )
+            log.info("Memoria guardada [%s]: %s", category, content)
+
+    def get_memories(self, user_id: str, category: str | None = None, limit: int = 30) -> list[dict]:
+        with self._conn() as conn:
+            q = "SELECT * FROM memories WHERE user_id = ?"
+            params: list = [user_id]
+            if category:
+                q += " AND category = ?"
+                params.append(category)
+            q += " ORDER BY updated_at DESC LIMIT ?"
+            params.append(limit)
+            return [dict(r) for r in conn.execute(q, params).fetchall()]
+
+    def delete_memory(self, memory_id: int):
+        with self._conn() as conn:
+            conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
 
     # --- Pending Contacts (Telegram self-registration) ---
     def add_pending_contact(self, chat_id: int, name: str, relationship: str) -> int:

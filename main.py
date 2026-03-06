@@ -9,9 +9,11 @@ import sys
 import signal
 import threading
 import time
+import re as _re
 import logging
 import logging.handlers
 import tempfile
+from datetime import datetime, timedelta
 import yaml
 
 # Base directory
@@ -68,6 +70,58 @@ signal.signal(signal.SIGTERM, cleanup)
 signal.signal(signal.SIGINT, cleanup)
 
 
+def resolve_relative_time(time_str: str) -> str:
+    """Convert relative time formats to absolute HH:MM.
+
+    Supports: +10m, +1h, +1h30m, '14:30' (passthrough),
+    and Spanish: '10 minutos', 'media hora', 'una hora'.
+    """
+    time_str = time_str.strip()
+
+    # Already absolute HH:MM
+    if _re.match(r"^\d{1,2}:\d{2}$", time_str):
+        return time_str
+
+    now = datetime.now()
+    delta = None
+
+    # +Xm, +Xh, +XhYm
+    m = _re.match(r"^\+?(\d+)h(\d+)m$", time_str, _re.IGNORECASE)
+    if m:
+        delta = timedelta(hours=int(m.group(1)), minutes=int(m.group(2)))
+    if delta is None:
+        m = _re.match(r"^\+(\d+)h$", time_str, _re.IGNORECASE)
+        if m:
+            delta = timedelta(hours=int(m.group(1)))
+    if delta is None:
+        m = _re.match(r"^\+(\d+)m$", time_str, _re.IGNORECASE)
+        if m:
+            delta = timedelta(minutes=int(m.group(1)))
+
+    # Spanish fallback
+    if delta is None:
+        lower = time_str.lower()
+        if "media hora" in lower:
+            delta = timedelta(minutes=30)
+        elif "una hora" in lower:
+            delta = timedelta(hours=1)
+        else:
+            m = _re.search(r"(\d+)\s*minuto", lower)
+            if m:
+                delta = timedelta(minutes=int(m.group(1)))
+            else:
+                m = _re.search(r"(\d+)\s*hora", lower)
+                if m:
+                    delta = timedelta(hours=int(m.group(1)))
+
+    if delta:
+        target = now + delta
+        return target.strftime("%H:%M")
+
+    # Could not parse, return as-is
+    return time_str
+
+
 def execute_actions(actions: list[dict], user_id: str, db: Database,
                     telegram: TelegramBot) -> list[str]:
     """Execute parsed actions from LLM response. Returns list of result messages."""
@@ -90,8 +144,9 @@ def execute_actions(actions: list[dict], user_id: str, db: Database,
                 results.append(f"Medicamento '{action['name']}' registrado")
 
             elif atype == "RECORDATORIO":
-                db.add_reminder(user_id, action["text"], action["time"])
-                results.append(f"Recordatorio creado para las {action['time']}")
+                resolved_time = resolve_relative_time(action["time"])
+                db.add_reminder(user_id, action["text"], resolved_time)
+                results.append(f"Recordatorio creado para las {resolved_time}")
 
             elif atype == "CONTACTO":
                 db.add_contact(
@@ -107,6 +162,10 @@ def execute_actions(actions: list[dict], user_id: str, db: Database,
                     results.append(f"Toma de '{action['name']}' registrada")
                 else:
                     results.append(f"No encontré el medicamento '{action['name']}'")
+
+            elif atype == "MEMORIA":
+                db.save_memory(user_id, action["category"], action["content"])
+                results.append(f"Memoria guardada: {action['content']}")
 
         except Exception as e:
             log.error("Error ejecutando accion %s: %s", atype, e)
@@ -362,51 +421,59 @@ def main():
             # k. Update reminders display
             update_reminders_display(db, display)
 
-            # l. Follow-up: always listen briefly after responding
-            log.info("Esperando follow-up...")
-            display.set_status("Escuchando...", "#e94560")
-            display.enable_talk_btn(False)
+            # l. Follow-up loop: multi-turn conversation
+            max_rounds = audio_cfg.get("max_followup_rounds", 5)
+            followup_wait = audio_cfg.get("followup_wait", 5.0)
 
-            followup_audio = record_until_silence(
-                sample_rate=audio_cfg.get("sample_rate", 16000),
-                silence_threshold=audio_cfg.get("silence_threshold", 500),
-                silence_duration=audio_cfg.get("silence_duration", 1.5),
-                max_seconds=audio_cfg.get("max_record_seconds", 30),
-                initial_wait=5.0,
-            )
+            for followup_round in range(1, max_rounds + 1):
+                log.info("Esperando follow-up (ronda %d/%d)...", followup_round, max_rounds)
+                display.set_status("Escuchando...", "#e94560")
+                display.enable_talk_btn(False)
 
-            if followup_audio is not None:
+                followup_audio = record_until_silence(
+                    sample_rate=audio_cfg.get("sample_rate", 16000),
+                    silence_threshold=audio_cfg.get("silence_threshold", 500),
+                    silence_duration=audio_cfg.get("silence_duration", 1.5),
+                    max_seconds=audio_cfg.get("max_record_seconds", 30),
+                    initial_wait=followup_wait,
+                )
+
+                if followup_audio is None:
+                    log.info("Sin follow-up en ronda %d", followup_round)
+                    break
+
                 display.set_status("Procesando...", "#f0a500")
                 fw_path = save_wav(followup_audio, audio_cfg.get("sample_rate", 16000))
                 fw_text = stt.transcribe(fw_path)
                 os.unlink(fw_path)
 
-                if fw_text:
-                    display.set_transcript(fw_text)
-                    log.info("Follow-up: %s", fw_text)
-                    if user_id:
-                        db.save_conversation(user_id, "user", fw_text)
+                if not fw_text:
+                    log.info("Follow-up sin texto en ronda %d", followup_round)
+                    break
 
-                    display.set_status("Pensando...", "#f0a500")
-                    fw_response, fw_actions = llm.chat(fw_text, user_name, db, user_id)
+                display.set_transcript(fw_text)
+                log.info("Follow-up ronda %d: %s", followup_round, fw_text)
+                if user_id:
+                    db.save_conversation(user_id, "user", fw_text)
 
-                    if fw_actions:
-                        fw_results = execute_actions(fw_actions, user_id or "unknown", db, telegram)
-                        for r in fw_results:
-                            log.info("Accion follow-up: %s", r)
+                display.set_status("Pensando...", "#f0a500")
+                fw_response, fw_actions = llm.chat(fw_text, user_name, db, user_id)
 
-                    display.set_status("Hablando...", "#e94560")
-                    display.set_response(fw_response)
-                    fw_tts = tts.speak(fw_response)
-                    if fw_tts:
-                        play_audio(fw_tts)
-                        os.unlink(fw_tts)
+                if fw_actions:
+                    fw_results = execute_actions(fw_actions, user_id or "unknown", db, telegram)
+                    for r in fw_results:
+                        log.info("Accion follow-up ronda %d: %s", followup_round, r)
 
-                    if user_id:
-                        db.save_conversation(user_id, "assistant", fw_response)
-                    update_reminders_display(db, display)
-            else:
-                log.info("No hubo follow-up")
+                display.set_status("Hablando...", "#e94560")
+                display.set_response(fw_response)
+                fw_tts = tts.speak(fw_response)
+                if fw_tts:
+                    play_audio(fw_tts)
+                    os.unlink(fw_tts)
+
+                if user_id:
+                    db.save_conversation(user_id, "assistant", fw_response)
+                update_reminders_display(db, display)
 
         except Exception as e:
             log.error("Error en loop principal: %s", e, exc_info=True)

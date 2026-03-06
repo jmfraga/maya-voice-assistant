@@ -32,6 +32,9 @@ def parse_actions(text: str) -> tuple[str, list[dict]]:
                 action["relationship"] = parts[3].strip()
             elif action["type"] == "CONFIRMAR_MEDICAMENTO" and len(parts) >= 2:
                 action["name"] = parts[1].strip()
+            elif action["type"] == "MEMORIA" and len(parts) >= 3:
+                action["category"] = parts[1].strip()
+                action["content"] = ":".join(parts[2:]).strip()
             actions.append(action)
 
     clean = ACTION_PATTERN.sub("", text).strip()
@@ -64,19 +67,27 @@ class LLM:
             log.error("Proveedor LLM desconocido: %s", self.provider)
 
     def build_context(self, user_name: str, db=None, user_id: str | None = None) -> str:
-        """Build context string with user info, medications, reminders."""
+        """Build context string with user info, medications, reminders, memories."""
         parts = [f"Usuario actual: {user_name}"]
         now = datetime.now()
         parts.append(f"Fecha y hora: {now.strftime('%A %d de %B de %Y, %H:%M')}")
 
         if db and user_id:
+            # Medicamentos (detallado)
             meds = db.get_medications(user_id)
             if meds:
-                med_list = ", ".join(
-                    f"{m['name']} ({m['dosage']}, {m['schedule']})" for m in meds
-                )
-                parts.append(f"Medicamentos de {user_name}: {med_list}")
+                parts.append(f"Medicamentos de {user_name}:")
+                for m in meds:
+                    parts.append(f"  - {m['name']}: {m['dosage']}, horario: {m['schedule']}")
 
+            # Tomas de hoy
+            today = now.strftime("%Y-%m-%d")
+            med_log = db.get_medication_log(user_id, date=today)
+            if med_log:
+                taken = [f"{ml['med_name']} ({ml['taken_at'][-5:]})" for ml in med_log]
+                parts.append(f"Medicamentos tomados hoy: {', '.join(taken)}")
+
+            # Recordatorios pendientes
             reminders = db.get_pending_reminders(user_id)
             if reminders:
                 rem_list = ", ".join(
@@ -84,13 +95,22 @@ class LLM:
                 )
                 parts.append(f"Recordatorios pendientes: {rem_list}")
 
-            history = db.get_recent_conversations(user_id, limit=6)
+            # Memorias
+            memories = db.get_memories(user_id, limit=30)
+            if memories:
+                parts.append("Cosas que recuerdo de ti:")
+                for mem in memories:
+                    parts.append(f"  - [{mem['category']}] {mem['content']}")
+
+            # Historial expandido (20 msgs, 300 chars)
+            history = db.get_recent_conversations(user_id, limit=20)
             if history:
                 parts.append("Conversacion reciente:")
                 for msg in history:
                     role = "Usuario" if msg["role"] == "user" else self.assistant_name
-                    parts.append(f"  {role}: {msg['content'][:100]}")
+                    parts.append(f"  {role}: {msg['content'][:300]}")
 
+            # Contactos
             contacts = db.get_contacts(user_id)
             if contacts:
                 contact_list = ", ".join(
