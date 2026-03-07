@@ -108,6 +108,13 @@ class Database:
                 (user_id, real_name),
             )
 
+    def get_user(self, user_id: str) -> dict | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM users WHERE id = ?", (user_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
     def update_user(self, user_id: str, real_name: str):
         with self._conn() as conn:
             conn.execute(

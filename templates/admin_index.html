@@ -36,10 +36,21 @@
                 </form>
             </div>
             <small style="color:#8899aa">ID: {{ u.id }}</small>
+            <div style="margin:8px 0">
+                <img src="/photos/{{ u.id }}?v={{ range(10000)|random }}" alt=""
+                     style="width:60px;height:60px;border-radius:50%;object-fit:cover;background:#2a2a4a;display:block;margin-bottom:6px"
+                     onerror="this.style.display='none'">
+                <form method="post" action="/users/{{ u.id }}/upload-photo" enctype="multipart/form-data">
+                    <input type="file" name="photo" accept="image/*"
+                           style="color:#8899aa;font-size:0.85em;width:100%;margin-bottom:4px">
+                    <button type="submit" class="btn btn-primary btn-small">Subir foto</button>
+                </form>
+            </div>
             <div class="user-links">
                 <a href="/medications/{{ u.id }}">Medicamentos</a>
                 <a href="/pending">Contactos</a>
                 <a href="/reminders/{{ u.id }}">Recordatorios</a>
+                <a href="/memories/{{ u.id }}">Memorias</a>
                 <a href="/log/{{ u.id }}">Historial</a>
             </div>
         </div>

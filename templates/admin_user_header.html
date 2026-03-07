@@ -1,0 +1,17 @@
+<!-- User header with photo and navigation -->
+<div style="display:flex;align-items:center;gap:16px;margin-bottom:16px">
+    <img src="/photos/{{ user.id }}?v={{ range(10000)|random }}" alt=""
+         style="width:80px;height:80px;border-radius:50%;object-fit:cover;background:#2a2a4a"
+         onerror="this.style.display='none'">
+    <div>
+        <h2 style="color:#e94560;margin-bottom:4px">{{ user.real_name }}</h2>
+        <small style="color:#8899aa">ID: {{ user.id }}</small>
+    </div>
+</div>
+<div style="margin-bottom:12px;display:flex;flex-wrap:wrap;gap:8px">
+    <a href="/medications/{{ user.id }}" class="btn btn-small" style="background:#0f3460">Medicamentos</a>
+    <a href="/contacts/{{ user.id }}" class="btn btn-small" style="background:#0f3460">Contactos</a>
+    <a href="/reminders/{{ user.id }}" class="btn btn-small" style="background:#0f3460">Recordatorios</a>
+    <a href="/memories/{{ user.id }}" class="btn btn-small" style="background:#0f3460">Memorias</a>
+    <a href="/log/{{ user.id }}" class="btn btn-small" style="background:#0f3460">Historial</a>
+</div>

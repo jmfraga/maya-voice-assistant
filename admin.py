@@ -20,6 +20,14 @@ def create_app(db=None, telegram_bot=None) -> Flask:
     app = Flask(__name__, template_folder=os.path.join(BASE_DIR, "templates"),
                 static_folder=os.path.join(BASE_DIR, "static"))
     app.secret_key = os.environ.get("MAYA_ADMIN_SECRET", "maya-admin-dev-key")
+    app.config["TEMPLATES_AUTO_RELOAD"] = True
+    app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16MB max upload
+
+    @app.after_request
+    def add_no_cache(response):
+        if response.content_type and "text/html" in response.content_type:
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return response
 
     if db is None:
         from db import Database
@@ -186,6 +194,24 @@ def create_app(db=None, telegram_bot=None) -> Flask:
         logs = db.get_medication_log(user_id)
         return render_template("admin_log.html", user=user, logs=logs, users=users)
 
+    # --- Memories ---
+    @app.route("/memories/<user_id>")
+    def memories(user_id):
+        users = db.get_users()
+        user = next((u for u in users if u["id"] == user_id), None)
+        if not user:
+            flash("Usuario no encontrado", "error")
+            return redirect(url_for("index"))
+        mems = db.get_memories(user_id, limit=100)
+        return render_template("admin_memories.html", user=user, memories=mems, users=users)
+
+    @app.route("/memories/delete/<int:mem_id>", methods=["POST"])
+    def delete_memory(mem_id):
+        user_id = request.form["user_id"]
+        db.delete_memory(mem_id)
+        flash("Memoria eliminada", "success")
+        return redirect(url_for("memories", user_id=user_id))
+
     # --- Users ---
     @app.route("/users/add", methods=["POST"])
     def add_user():
@@ -291,12 +317,54 @@ def create_app(db=None, telegram_bot=None) -> Flask:
             "anthropic_key": _mask(cfg.get("llm", {}).get("claude", {}).get("api_key", "")),
             "openai_llm_key": _mask(cfg.get("llm", {}).get("openai", {}).get("api_key", "")),
             "telegram_token": _mask(cfg.get("telegram", {}).get("bot_token", "")),
+            "weather_key": _mask(cfg.get("weather", {}).get("api_key", "")),
         }
         ppn_file = cfg.get("wake_word", {}).get("keyword_path", "")
         ppn_path = os.path.join(BASE_DIR, ppn_file) if ppn_file else ""
         ppn_exists = os.path.isfile(ppn_path)
         return render_template("admin_settings.html", config=cfg, keys=keys, users=users,
                                ppn_exists=ppn_exists)
+
+    @app.route("/photos/<user_id>")
+    def user_photo(user_id):
+        """Serve user photo."""
+        from flask import send_from_directory, make_response
+        photos_dir = os.path.join(BASE_DIR, "data", "photos")
+        for ext in (".jpg", ".jpeg", ".png"):
+            if os.path.isfile(os.path.join(photos_dir, f"{user_id}{ext}")):
+                resp = make_response(send_from_directory(photos_dir, f"{user_id}{ext}"))
+                resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+                return resp
+        # Return a 1x1 transparent pixel if no photo
+        return "", 204
+
+    @app.route("/users/<user_id>/upload-photo", methods=["POST"])
+    def upload_photo(user_id):
+        log.info("Upload foto para %s, files: %s", user_id, list(request.files.keys()))
+        f = request.files.get("photo")
+        if not f or not f.filename:
+            log.warning("No se recibio archivo para %s", user_id)
+            flash("Selecciona una foto primero", "error")
+            return redirect(url_for("index"))
+
+        ext = os.path.splitext(f.filename)[1].lower()
+        if ext not in (".jpg", ".jpeg", ".png"):
+            flash("Solo se permiten archivos .jpg o .png", "error")
+            return redirect(url_for("index"))
+
+        photos_dir = os.path.join(BASE_DIR, "data", "photos")
+        os.makedirs(photos_dir, exist_ok=True)
+
+        # Remove old photos for this user
+        for old_ext in (".jpg", ".jpeg", ".png"):
+            old = os.path.join(photos_dir, f"{user_id}{old_ext}")
+            if os.path.isfile(old):
+                os.remove(old)
+
+        dest = os.path.join(photos_dir, f"{user_id}{ext}")
+        f.save(dest)
+        flash(f"Foto de {user_id} actualizada. Reinicia Maya para verla.", "success")
+        return redirect(url_for("index"))
 
     @app.route("/settings/upload-ppn", methods=["POST"])
     def upload_ppn():
@@ -368,6 +436,11 @@ def create_app(db=None, telegram_bot=None) -> Flask:
         tts_primary = request.form.get("tts_primary", "elevenlabs")
         cfg.setdefault("tts", {})["primary"] = tts_primary
 
+        # OpenAI voice
+        openai_voice = request.form.get("openai_voice", "").strip()
+        if openai_voice:
+            cfg.setdefault("tts", {}).setdefault("openai", {})["voice"] = openai_voice
+
         # ElevenLabs model
         eleven_model = request.form.get("elevenlabs_model", "").strip()
         if eleven_model:
@@ -424,6 +497,17 @@ def create_app(db=None, telegram_bot=None) -> Flask:
                         pass
             if contacts:
                 cfg.setdefault("telegram", {})["contacts"] = contacts
+
+        # --- Weather ---
+        weather_key = request.form.get("weather_api_key", "").strip()
+        if weather_key:
+            cfg.setdefault("weather", {})["api_key"] = weather_key
+        weather_city = request.form.get("weather_city", "").strip()
+        if weather_city:
+            cfg.setdefault("weather", {})["city"] = weather_city
+
+        # --- Production mode ---
+        cfg["production_mode"] = request.form.get("production_mode") == "on"
 
         _save_config(cfg)
         flash("Configuracion guardada. Reinicia Maya para aplicar cambios.", "success")

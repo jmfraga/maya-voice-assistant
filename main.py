@@ -20,6 +20,35 @@ import yaml
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(BASE_DIR)
 
+# --- Single instance lock ---
+LOCK_FILE = os.path.join(BASE_DIR, "data", ".maya.lock")
+
+def _acquire_lock():
+    """Ensure only one Maya instance runs. Kill old if needed."""
+    os.makedirs(os.path.dirname(LOCK_FILE), exist_ok=True)
+    if os.path.isfile(LOCK_FILE):
+        try:
+            old_pid = int(open(LOCK_FILE).read().strip())
+            if old_pid != os.getpid():
+                os.kill(old_pid, signal.SIGTERM)
+                time.sleep(1)
+                try:
+                    os.kill(old_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+        except (ValueError, ProcessLookupError, PermissionError):
+            pass
+    with open(LOCK_FILE, "w") as f:
+        f.write(str(os.getpid()))
+
+def _release_lock():
+    try:
+        os.remove(LOCK_FILE)
+    except FileNotFoundError:
+        pass
+
+_acquire_lock()
+
 # --- Logging ---
 os.makedirs(os.path.join(BASE_DIR, "logs"), exist_ok=True)
 log_handler = logging.handlers.RotatingFileHandler(
@@ -50,6 +79,7 @@ from db import Database
 from speaker_id import SpeakerID
 from telegram_bot import TelegramBot
 from display import Display
+from weather import Weather
 from admin import start_admin
 
 # --- Globals ---
@@ -214,6 +244,239 @@ def update_reminders_display(db: Database, display: Display):
         pass
 
 
+def _llm_quick(llm, system: str, prompt: str, max_tokens: int = 150) -> str:
+    """Quick LLM call for extraction/consolidation tasks."""
+    try:
+        if llm.provider == "claude":
+            result = llm._client.messages.create(
+                model=llm.model, max_tokens=max_tokens,
+                system=system,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return result.content[0].text.strip()
+        elif llm.provider == "openai":
+            import httpx
+            resp = httpx.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {llm._api_key}",
+                         "Content-Type": "application/json"},
+                json={"model": llm.model, "max_tokens": max_tokens,
+                      "messages": [
+                          {"role": "system", "content": system},
+                          {"role": "user", "content": prompt}]},
+                timeout=15.0,
+            )
+            return resp.json()["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        log.warning("Error en LLM quick: %s", e)
+    return ""
+
+
+def _extract_with_llm(llm, question: str, raw_answer: str) -> str:
+    """Use LLM to extract clean info from a raw spoken answer."""
+    prompt = (
+        f"El usuario respondio a la pregunta: '{question}'\n"
+        f"Su respuesta fue: '{raw_answer}'\n\n"
+        "Extrae SOLO la informacion relevante de la respuesta, limpia y concisa. "
+        "Por ejemplo si la pregunta fue 'como te gustaria que te llamara' y "
+        "respondio 'dime Juanito', extrae solo 'Juanito'. "
+        "Si la respuesta es vaga como 'todo eso' o 'me parece bien', responde: TODO. "
+        "Responde UNICAMENTE con el dato extraido, sin explicaciones ni frases adicionales."
+    )
+    result = _llm_quick(llm,
+                        "Eres un extractor de datos. Responde con maximo 10 palabras.",
+                        prompt, max_tokens=50)
+    return result if result and result != "TODO" else raw_answer
+
+
+def _smart_save_memory(llm, db, user_id: str, category: str, new_content: str):
+    """Save memory with LLM-powered dedup and contradiction handling.
+
+    On contradiction: asks LLM to merge both into the most accurate version.
+    """
+    existing = db.get_memories(user_id, category=category, limit=50)
+
+    if not existing:
+        db.save_memory(user_id, category, new_content)
+        return
+
+    existing_list = "\n".join(
+        f"  [{m['id']}] {m['content']}" for m in existing
+    )
+    prompt = (
+        f"Memorias existentes en categoria '{category}':\n{existing_list}\n\n"
+        f"Nueva memoria a guardar: '{new_content}'\n\n"
+        "Analiza si la nueva memoria:\n"
+        "1. DUPLICA una existente (dice lo mismo) -> responde: DUPLICA:id\n"
+        "2. CONTRADICE una existente (info opuesta) -> responde: CONTRADICE:id\n"
+        "3. ACTUALIZA una existente (info mas reciente/completa) -> responde: ACTUALIZA:id\n"
+        "4. Es informacion NUEVA -> responde: NUEVA\n\n"
+        "Responde SOLO con una de las opciones."
+    )
+
+    result = _llm_quick(llm,
+                        "Analiza memorias. Responde solo DUPLICA:id, CONTRADICE:id, ACTUALIZA:id o NUEVA.",
+                        prompt, max_tokens=30)
+
+    log.info("Memoria check: '%s' -> %s", new_content, result)
+
+    if result.startswith("DUPLICA:"):
+        log.info("Memoria duplicada, no se guarda: %s", new_content)
+        return
+
+    if result.startswith("ACTUALIZA:"):
+        try:
+            old_id = int(result.split(":")[1].strip())
+            db.delete_memory(old_id)
+            log.info("Memoria %d actualizada por: %s", old_id, new_content)
+        except (ValueError, IndexError):
+            pass
+        db.save_memory(user_id, category, new_content)
+        return
+
+    if result.startswith("CONTRADICE:"):
+        try:
+            old_id = int(result.split(":")[1].strip())
+            old_mem = next((m for m in existing if m["id"] == old_id), None)
+            if old_mem:
+                # Ask LLM to resolve: keep newer as truth, merge if possible
+                merge_prompt = (
+                    f"Memoria anterior: '{old_mem['content']}'\n"
+                    f"Memoria nueva (mas reciente): '{new_content}'\n\n"
+                    "Estas dos memorias se contradicen. La mas reciente es la "
+                    "que el usuario acaba de decir, asi que tiene prioridad. "
+                    "Genera UNA sola memoria que refleje la informacion correcta "
+                    "y mas actual. Responde solo con la memoria final, sin explicaciones."
+                )
+                merged = _llm_quick(llm,
+                                    "Fusiona memorias. La mas reciente tiene prioridad.",
+                                    merge_prompt, max_tokens=100)
+                if merged:
+                    db.delete_memory(old_id)
+                    db.save_memory(user_id, category, merged)
+                    log.info("Memoria %d contradicha, fusionada: %s", old_id, merged)
+                    return
+        except (ValueError, IndexError):
+            pass
+
+    db.save_memory(user_id, category, new_content)
+
+
+def run_onboarding(user_id: str, user_name: str, config: dict, db,
+                    stt, tts, llm, display, audio_cfg: dict):
+    """Guided onboarding: Maya introduces herself and learns about the user."""
+    log.info("=== Onboarding para %s ===", user_name)
+
+    display.show_conversation()
+    display.set_user(user_name)
+
+    def _say(text):
+        """Speak and show on display."""
+        display.set_status("Hablando...", "#e94560")
+        display.set_response(text)
+        path = tts.speak(text)
+        if path:
+            play_audio(path)
+            os.unlink(path)
+
+    def _listen():
+        """Record, transcribe, return text or None."""
+        display.set_status("Escuchando...", "#e94560")
+        display.set_transcript("...")
+        audio = record_until_silence(
+            sample_rate=audio_cfg.get("sample_rate", 16000),
+            silence_threshold=audio_cfg.get("silence_threshold", 500),
+            silence_duration=audio_cfg.get("silence_duration", 1.5),
+            max_seconds=audio_cfg.get("max_record_seconds", 30),
+            initial_wait=8.0,
+        )
+        if audio is None:
+            return None
+        display.set_status("Procesando...", "#f0a500")
+        wav_path = save_wav(audio, audio_cfg.get("sample_rate", 16000))
+        text = stt.transcribe(wav_path)
+        os.unlink(wav_path)
+        if text:
+            display.set_transcript(text)
+            log.info("Onboarding respuesta: %s", text)
+        return text
+
+    # --- Step 1: Introduction ---
+    _say(f"Hola {user_name}! Soy Maya, tu asistente personal. "
+         "Estoy aqui para ayudarte con tus medicamentos, recordatorios, "
+         "y lo que necesites. Vamos a conocernos un poquito!")
+
+    time.sleep(0.5)
+
+    # --- Step 2: Preferred name ---
+    question_name = "Como te gustaria que te llame?"
+    _say("Para empezar, como te gustaria que te llame? "
+         "Puedes decirme tu nombre, un apodo, o como prefieras.")
+
+    nickname_raw = _listen()
+    if nickname_raw:
+        nickname = _extract_with_llm(llm, question_name, nickname_raw)
+        _smart_save_memory(llm, db, user_id, "preferencia",
+                           f"Prefiere que le llamen: {nickname}")
+        _say(f"Perfecto! Te voy a decir {nickname}.")
+    else:
+        _say(f"Esta bien, te sigo diciendo {user_name}.")
+
+    time.sleep(0.3)
+
+    # --- Step 3: What to remember ---
+    question_about = "Hay algo importante que quieras que recuerde sobre ti?"
+    _say("Cuentame, hay algo importante que quieras que recuerde sobre ti? "
+         "Por ejemplo, tus gustos, tu comida favorita, algo que te guste hacer...")
+
+    about_raw = _listen()
+    if about_raw:
+        about = _extract_with_llm(llm, question_about, about_raw)
+        _smart_save_memory(llm, db, user_id, "informacion", about)
+        _say(f"Que interesante! Ya lo guarde.")
+    else:
+        _say("No te preocupes, poco a poco nos vamos conociendo.")
+
+    time.sleep(0.3)
+
+    # --- Step 4: How to help ---
+    question_help = "En que te gustaria que te ayude mas?"
+    _say("Y por ultimo, en que te gustaria que te ayude? "
+         "Puedo recordarte tus medicinas, ponerte recordatorios, "
+         "mandarte mensajes por Telegram, o simplemente platicar contigo.")
+
+    help_raw = _listen()
+    if help_raw:
+        help_pref = _extract_with_llm(llm, question_help, help_raw)
+        _smart_save_memory(llm, db, user_id, "preferencia",
+                           f"Le gustaria ayuda con: {help_pref}")
+        _say("Entendido! Lo voy a tener presente.")
+    else:
+        _say("No te preocupes, cuando necesites algo solo dime Oye Maya.")
+
+    time.sleep(0.3)
+
+    # --- Step 5: Summary ---
+    memories = db.get_memories(user_id, limit=10)
+    summary_parts = []
+    for m in memories:
+        summary_parts.append(f"- {m['content']}")
+    summary = "\n".join(summary_parts) if summary_parts else "Aun no hay notas."
+
+    display.set_transcript("Lo que aprendi de ti:")
+    display.set_response(summary)
+
+    _say(f"Listo! Ya nos conocemos un poquito. "
+         "Acuerdate que puedes hablarme cuando quieras diciendo Oye Maya, "
+         "o tocando tu nombre en la pantalla. Aqui estoy para lo que necesites!")
+
+    time.sleep(2)
+
+    display.active_user_id = None
+    display.show_main()
+    log.info("=== Onboarding completado para %s ===", user_name)
+
+
 def main():
     global wakeword_detector, running
 
@@ -258,8 +521,17 @@ def main():
     start_admin(db, admin_cfg.get("host", "0.0.0.0"), admin_cfg.get("port", 8085),
                 telegram_bot=telegram)
 
+    # Weather
+    weather_cfg = config.get("weather", {})
+    weather = Weather(
+        api_key=weather_cfg.get("api_key", ""),
+        city=weather_cfg.get("city", ""),
+    )
+    weather.start()
+
     # Talk trigger event (for tap-to-talk and wake word)
     talk_event = threading.Event()
+    user_talk_info = {"user_id": None, "mode": None}  # set by user menu
 
     def on_talk_pressed():
         """Called from display button or wake word detection."""
@@ -271,8 +543,18 @@ def main():
         running = False
         talk_event.set()  # Unblock main loop if waiting
 
+    def on_user_talk(user_id, mode="talk"):
+        """Called when user taps 'Hablar con Maya' from their menu."""
+        user_talk_info["user_id"] = user_id
+        user_talk_info["mode"] = mode
+        talk_event.set()
+
     # Display
-    display = Display(on_close=on_exit_pressed, on_talk=on_talk_pressed)
+    display = Display(
+        config=config, db=db, weather=weather,
+        on_close=on_exit_pressed, on_talk=on_talk_pressed,
+        on_user_talk=on_user_talk,
+    )
     display.start()
     time.sleep(0.5)  # Let display init
 
@@ -333,6 +615,27 @@ def main():
             if not running:
                 break
 
+            # Check if user was selected from menu
+            selected_user_id = user_talk_info.get("user_id")
+            selected_mode = user_talk_info.get("mode")
+            user_talk_info["user_id"] = None
+            user_talk_info["mode"] = None
+
+            # Onboarding mode: guided introduction
+            if selected_mode == "onboarding" and selected_user_id:
+                uid = selected_user_id
+                db_user = db.get_user(uid)
+                uname = db_user["real_name"] if db_user else uid
+                try:
+                    run_onboarding(uid, uname, config, db, stt, tts, llm,
+                                   display, audio_cfg)
+                except Exception as e:
+                    log.error("Error en onboarding: %s", e, exc_info=True)
+                    display.active_user_id = None
+                    display.show_main()
+                continue
+
+            display.show_conversation()
             display.enable_talk_btn(False)
 
             # b. Play acknowledgment chime
@@ -352,20 +655,27 @@ def main():
 
             if audio is None:
                 display.set_status("No escuche nada", "#8899aa")
+                display.active_user_id = None
+                display.show_main()
                 time.sleep(1)
                 continue
 
-            # d. Speaker identification
-            user_id = None
+            # d. Speaker identification (skip if user selected from menu)
+            user_id = selected_user_id
             user_name = "Usuario"
-            if speaker.enabled:
+            if user_id:
+                db_user = db.get_user(user_id)
+                user_name = db_user["real_name"] if db_user else user_id
+                display.set_user(user_name)
+                log.info("Usuario seleccionado: %s", user_name)
+            elif speaker.enabled:
                 user_id = speaker.identify(audio, audio_cfg.get("sample_rate", 16000))
                 if user_id:
                     user_name = config["users"][user_id].get("real_name", user_id)
                     display.set_user(user_name)
                     log.info("Hablante: %s", user_name)
 
-            # Default user when speaker_id is disabled
+            # Default user when speaker_id is disabled and no selection
             if not user_id:
                 users = config.get("users", {})
                 user_id = list(users.keys())[0] if users else "default"
@@ -381,10 +691,12 @@ def main():
 
             if not text:
                 display.set_status("No entendi", "#8899aa")
-                err_path = tts.speak("Disculpe, no pude entender. ¿Puede repetir?")
+                err_path = tts.speak("Disculpa, no te entendi. Puedes repetir?")
                 if err_path:
                     play_audio(err_path)
                     os.unlink(err_path)
+                display.active_user_id = None
+                display.show_main()
                 continue
 
             # f. Show transcript
@@ -475,9 +787,15 @@ def main():
                     db.save_conversation(user_id, "assistant", fw_response)
                 update_reminders_display(db, display)
 
+            # Return to main screen after conversation ends
+            display.active_user_id = None
+            display.show_main()
+
         except Exception as e:
             log.error("Error en loop principal: %s", e, exc_info=True)
             display.set_status("Error", "#e94560")
+            display.active_user_id = None
+            display.show_main()
             err_sound = os.path.join(sounds_dir, "error.wav")
             if os.path.isfile(err_sound):
                 play_audio(err_sound)
@@ -485,10 +803,12 @@ def main():
 
     # --- Cleanup ---
     log.info("Cerrando Maya...")
+    weather.stop()
     telegram.stop_polling()
     display.stop()
     if wakeword_detector:
         wakeword_detector.cleanup()
+    _release_lock()
     log.info("=== Maya cerrada ===")
 
 

@@ -108,8 +108,21 @@
         <div class="form-group">
             <label>Metodo principal</label>
             <select name="tts_primary">
+                <option value="openai" {% if config.tts.primary == 'openai' %}selected{% endif %}>OpenAI TTS (en la nube)</option>
                 <option value="elevenlabs" {% if config.tts.primary == 'elevenlabs' %}selected{% endif %}>ElevenLabs (alta calidad, en la nube)</option>
                 <option value="piper" {% if config.tts.primary == 'piper' %}selected{% endif %}>Piper (local, gratis)</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Voz OpenAI</label>
+            {% set ovoice = config.tts.get('openai', {}).get('voice', 'shimmer') %}
+            <select name="openai_voice">
+                <option value="shimmer" {% if ovoice == 'shimmer' %}selected{% endif %}>Shimmer (estable en espanol)</option>
+                <option value="nova" {% if ovoice == 'nova' %}selected{% endif %}>Nova (natural, a veces mezcla)</option>
+                <option value="alloy" {% if ovoice == 'alloy' %}selected{% endif %}>Alloy (neutral)</option>
+                <option value="echo" {% if ovoice == 'echo' %}selected{% endif %}>Echo (grave)</option>
+                <option value="fable" {% if ovoice == 'fable' %}selected{% endif %}>Fable (expresiva)</option>
+                <option value="onyx" {% if ovoice == 'onyx' %}selected{% endif %}>Onyx (profunda)</option>
             </select>
         </div>
         <div class="form-group">
@@ -229,6 +242,34 @@
                 <label>Chat ID</label>
                 <input name="telegram_contact_id" type="number" placeholder="123456789">
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- Weather -->
+<div class="card">
+    <h2>Clima</h2>
+    <div class="form-row">
+        <div class="form-group">
+            <label>OpenWeatherMap API Key</label>
+            <input name="weather_api_key" type="password" placeholder="{{ keys.weather_key or 'API key de openweathermap.org' }}">
+        </div>
+        <div class="form-group">
+            <label>Ciudad</label>
+            <input name="weather_city" value="{{ config.get('weather', {}).get('city', '') }}" placeholder="Queretaro,MX">
+        </div>
+    </div>
+</div>
+
+<!-- Display -->
+<div class="card">
+    <h2>Pantalla</h2>
+    <div class="form-row">
+        <div class="form-group">
+            <label>
+                <input type="checkbox" name="production_mode" {% if config.get('production_mode') %}checked{% endif %}>
+                Modo produccion (oculta boton Salir y Config en pantalla)
+            </label>
         </div>
     </div>
 </div>

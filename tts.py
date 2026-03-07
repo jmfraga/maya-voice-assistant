@@ -45,7 +45,10 @@ class TTS:
             return None
 
         model = self.openai_cfg.get("model", "tts-1")
-        voice = self.openai_cfg.get("voice", "nova")
+        voice = self.openai_cfg.get("voice", "shimmer")
+
+        # Language hint: invisible prefix to anchor Spanish pronunciation
+        tts_text = text
 
         try:
             response = httpx.post(
@@ -56,9 +59,10 @@ class TTS:
                 },
                 json={
                     "model": model,
-                    "input": text,
+                    "input": tts_text,
                     "voice": voice,
                     "response_format": "mp3",
+                    "language": "es",
                 },
                 timeout=30.0,
             )

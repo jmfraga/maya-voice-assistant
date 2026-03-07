@@ -88,6 +88,10 @@ assistant:
     - [ACCION:RECORDATORIO:texto:hora] — La hora puede ser absoluta (14:30) o relativa
       (+10m, +1h, +30m, +1h30m). Usa relativo cuando digan "en X minutos/horas".
 
+weather:
+  api_key: "OPENWEATHERMAP_API_KEY"
+  city: "Mexico City"
+
 admin:
   host: "0.0.0.0"
   port: 8085

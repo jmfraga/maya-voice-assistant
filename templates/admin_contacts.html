@@ -1,13 +1,9 @@
 {% extends "admin_base.html" %}
 {% block title_extra %} - Contactos{% endblock %}
 {% block content %}
+{% include "admin_user_header.html" %}
 <div class="card">
-    <h2>Contactos de {{ user.real_name }}</h2>
-    <div style="margin-bottom:12px">
-        <a href="/medications/{{ user.id }}">Medicamentos</a> |
-        <a href="/reminders/{{ user.id }}">Recordatorios</a> |
-        <a href="/log/{{ user.id }}">Historial</a>
-    </div>
+    <h2>Contactos</h2>
 
     {% if contacts %}
     <table>

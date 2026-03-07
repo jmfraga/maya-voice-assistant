@@ -1,28 +1,101 @@
-"""Display module: Tkinter fullscreen UI on DSI touchscreen (800x480)."""
+"""Display module: Multi-screen Tkinter UI on DSI touchscreen (800x480).
+
+Screens:
+  - Main: clock, weather, alerts, user buttons
+  - UserMenu: action buttons per user
+  - Medications: list with taken/pending status
+  - Conversation: transcript + response during active chat
+  - Night: dim clock only (10pm-7am)
+"""
 
 import tkinter as tk
 import threading
 import queue
 import logging
+import os
 from datetime import datetime
 
 log = logging.getLogger("maya.display")
 
+# --- Theme (light, high contrast) ---
+BG = "#F0F0F0"
+CARD_BG = "#FFFFFF"
+TEXT = "#1A1A1A"
+TEXT_SEC = "#555555"
+ACCENT = "#E94560"
+SUCCESS = "#27AE60"
+WARNING = "#E67E22"
+DANGER = "#C0392B"
+MUTED = "#999999"
+NIGHT_BG = "#111111"
+NIGHT_TEXT = "#AAAAAA"
+
+USER_COLORS = ["#2980B9", "#27AE60", "#8E44AD", "#D35400"]
+
+W, H = 800, 480
+AUTO_RETURN_MS = 120_000  # 2 minutes
+NIGHT_START = 22  # 10pm
+NIGHT_END = 7     # 7am
+
+# Spanish day/month names
+DAYS = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"]
+MONTHS = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+          "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+
+
+def _greeting():
+    h = datetime.now().hour
+    if h < 12:
+        return "Buenos dias"
+    elif h < 19:
+        return "Buenas tardes"
+    return "Buenas noches"
+
+
+def _weather_icon(icon_code: str) -> str:
+    mapping = {
+        "01d": "\u2600", "01n": "\u263E", "02d": "\u26C5", "02n": "\u26C5",
+        "03d": "\u2601", "03n": "\u2601", "04d": "\u2601", "04n": "\u2601",
+        "09d": "\u2614", "09n": "\u2614", "10d": "\u2614", "10n": "\u2614",
+        "11d": "\u26A1", "11n": "\u26A1", "13d": "\u2744", "13n": "\u2744",
+        "50d": "\u2588", "50n": "\u2588",
+    }
+    return mapping.get(icon_code, "")
+
 
 class Display:
-    """Fullscreen display for Maya assistant on DSI touchscreen."""
+    """Multi-screen fullscreen display for Maya on DSI touchscreen."""
 
-    def __init__(self, on_close=None, on_talk=None):
+    def __init__(self, config: dict, db=None, weather=None,
+                 on_close=None, on_talk=None, on_user_talk=None):
         self.queue = queue.Queue()
-        self.on_close = on_close      # callback when user taps Salir
-        self.on_talk = on_talk        # callback when user taps Hablar (tap-to-talk)
+        self.config = config
+        self.db = db
+        self.weather = weather
+        self.on_close = on_close
+        self.on_talk = on_talk
+        self.on_user_talk = on_user_talk  # callback(user_id)
         self.root = None
         self._thread = None
         self._running = False
-        self._talk_btn = None
+        self._auto_return_after_id = None
+        self._night_mode = False
+        self._current_screen = "main"
+        self.active_user_id = None  # set when user taps their button to talk
+        self._photo_images = {}  # keep references to prevent GC
+
+        # Users: prefer DB names (editable via admin), fallback to config
+        self._users = []
+        db_users = {u["id"]: u["real_name"] for u in db.get_users()} if db else {}
+        for i, (uid, ucfg) in enumerate(config.get("users", {}).items()):
+            name = db_users.get(uid, ucfg.get("real_name", uid))
+            self._users.append({
+                "id": uid,
+                "name": name,
+                "color": USER_COLORS[i % len(USER_COLORS)],
+            })
 
     def start(self):
-        """Start display in a separate thread."""
         self._running = True
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
@@ -30,146 +103,1053 @@ class Display:
     def _run(self):
         self.root = tk.Tk()
         self.root.title("Maya")
-        self.root.attributes("-fullscreen", True)
-        self.root.configure(bg="#1a1a2e")
+        self.root.configure(bg=BG)
+        # Force window to DSI screen size and position
+        self.root.geometry(f"{W}x{H}+0+0")
         self.root.overrideredirect(True)
+        self.root.attributes("-topmost", True)
 
-        # Colors
-        BG = "#1a1a2e"
-        CARD_BG = "#16213e"
-        TEXT = "#e8e8e8"
-        ACCENT = "#e94560"
-        MUTED = "#8899aa"
-        SUCCESS = "#4ecca3"
+        # Container for all screens
+        self._container = tk.Frame(self.root, bg=BG)
+        self._container.place(x=0, y=0, width=W, height=H)
 
-        W, H = 800, 480
+        # Build screens
+        self._screens = {}
+        self._build_main_screen()
+        self._build_conversation_screen()
+        self._build_night_screen()
 
-        canvas = tk.Canvas(self.root, width=W, height=H, bg=BG, highlightthickness=0)
-        canvas.pack(fill="both", expand=True)
+        # Show main
+        self._show_screen("main")
 
-        # --- Clock (top right) ---
-        self.clock_label = tk.Label(
-            canvas, text="", font=("Helvetica", 36, "bold"),
-            fg=TEXT, bg=BG, anchor="e",
-        )
-        self.clock_label.place(x=W - 20, y=15, anchor="ne")
-
-        self.date_label = tk.Label(
-            canvas, text="", font=("Helvetica", 14),
-            fg=MUTED, bg=BG, anchor="e",
-        )
-        self.date_label.place(x=W - 20, y=60, anchor="ne")
-
-        # --- Maya title + status (top left) ---
-        tk.Label(
-            canvas, text="Maya", font=("Helvetica", 28, "bold"),
-            fg=ACCENT, bg=BG,
-        ).place(x=20, y=15)
-
-        self.status_label = tk.Label(
-            canvas, text="Iniciando...", font=("Helvetica", 16),
-            fg=SUCCESS, bg=BG,
-        )
-        self.status_label.place(x=20, y=55)
-
-        # --- User label ---
-        self.user_label = tk.Label(
-            canvas, text="", font=("Helvetica", 14),
-            fg=MUTED, bg=BG,
-        )
-        self.user_label.place(x=20, y=85)
-
-        # --- Divider ---
-        canvas.create_line(20, 115, W - 20, 115, fill="#2a2a4a", width=2)
-
-        # --- Transcription area ---
-        tk.Label(
-            canvas, text="Usted dijo:", font=("Helvetica", 11),
-            fg=MUTED, bg=BG, anchor="w",
-        ).place(x=20, y=125)
-
-        self.transcript_label = tk.Label(
-            canvas, text="...", font=("Helvetica", 16),
-            fg=TEXT, bg=CARD_BG, anchor="nw", justify="left",
-            wraplength=W - 60, padx=10, pady=8,
-        )
-        self.transcript_label.place(x=20, y=150, width=W - 40, height=60)
-
-        # --- Response area ---
-        tk.Label(
-            canvas, text="Maya:", font=("Helvetica", 11),
-            fg=MUTED, bg=BG, anchor="w",
-        ).place(x=20, y=220)
-
-        self.response_label = tk.Label(
-            canvas, text="...", font=("Helvetica", 16),
-            fg=TEXT, bg=CARD_BG, anchor="nw", justify="left",
-            wraplength=W - 60, padx=10, pady=8,
-        )
-        self.response_label.place(x=20, y=245, width=W - 40, height=80)
-
-        # --- Divider ---
-        canvas.create_line(20, 340, W - 20, 340, fill="#2a2a4a", width=2)
-
-        # --- Reminders section ---
-        tk.Label(
-            canvas, text="Proximos recordatorios", font=("Helvetica", 12, "bold"),
-            fg=ACCENT, bg=BG, anchor="w",
-        ).place(x=20, y=350)
-
-        self.reminders_label = tk.Label(
-            canvas, text="Sin recordatorios pendientes", font=("Helvetica", 13),
-            fg=MUTED, bg=BG, anchor="nw", justify="left",
-            wraplength=360,
-        )
-        self.reminders_label.place(x=20, y=378, width=380, height=90)
-
-        # --- Bottom right: Talk button + Exit button ---
-        # Talk button (tap-to-talk, large and friendly)
-        self._talk_btn = tk.Button(
-            canvas, text="Toca para\nhablar", font=("Helvetica", 16, "bold"),
-            bg="#4ecca3", fg="#1a1a2e", activebackground="#3dbb92",
-            width=12, height=3, relief="flat", bd=0,
-            command=self._on_talk_pressed,
-        )
-        self._talk_btn.place(x=440, y=355, width=200, height=100)
-
-        # Exit button (smaller, top-right area)
-        tk.Button(
-            canvas, text="Salir", font=("Helvetica", 12, "bold"),
-            bg=ACCENT, fg=TEXT, activebackground="#d03050",
-            width=8, relief="flat", bd=0,
-            command=self._on_close_pressed,
-        ).place(x=670, y=370, width=110, height=40)
-
-        # Start clock update
+        # Start timers
         self._update_clock()
-
-        # Process queue
         self._process_queue()
+        self._check_night_mode()
 
         self.root.mainloop()
 
-    def _on_talk_pressed(self):
-        """Handle tap-to-talk button press."""
-        if self.on_talk:
-            # Run callback in a thread to not block Tkinter
-            threading.Thread(target=self.on_talk, daemon=True).start()
+    # ===== SCREEN BUILDERS =====
 
-    def _on_close_pressed(self):
-        """Handle exit button press."""
-        if self.on_close:
-            self.on_close()
-        self.stop()
+    def _build_main_screen(self):
+        f = tk.Frame(self._container, bg=BG)
+        f.place(x=0, y=0, width=W, height=H)
+        self._screens["main"] = f
+
+        # --- Top section: clock left, info right ---
+        top = tk.Frame(f, bg=CARD_BG, height=130)
+        top.place(x=0, y=0, width=W, height=130)
+
+        # Clock (left side, big)
+        self._clock_label = tk.Label(
+            top, text="", font=("Helvetica", 72, "bold"),
+            fg=TEXT, bg=CARD_BG, anchor="w",
+        )
+        self._clock_label.place(x=20, y=10, height=90)
+
+        # Right side: greeting, date, weather stacked
+        self._greeting_label = tk.Label(
+            top, text=_greeting(), font=("Helvetica", 20, "bold"),
+            fg=TEXT, bg=CARD_BG, anchor="e",
+        )
+        self._greeting_label.place(x=W - 20, y=10, anchor="ne")
+
+        self._date_label = tk.Label(
+            top, text="", font=("Helvetica", 17),
+            fg=TEXT_SEC, bg=CARD_BG, anchor="e",
+        )
+        self._date_label.place(x=W - 20, y=45, anchor="ne")
+
+        self._weather_label = tk.Label(
+            top, text="", font=("Helvetica", 18),
+            fg=TEXT_SEC, bg=CARD_BG, anchor="e",
+        )
+        self._weather_label.place(x=W - 20, y=80, anchor="ne")
+
+        # --- Alert bar ---
+        alert_frame = tk.Frame(f, bg=BG, height=50)
+        alert_frame.place(x=0, y=135, width=W, height=50)
+
+        self._alert_left = tk.Label(
+            alert_frame, text="", font=("Helvetica", 15),
+            fg=WARNING, bg=BG, anchor="w", cursor="hand2",
+        )
+        self._alert_left.place(x=25, y=5, width=370, height=40)
+        self._alert_left.bind("<Button-1>", self._on_alert_tap)
+
+        self._alert_right = tk.Label(
+            alert_frame, text="", font=("Helvetica", 15),
+            fg=ACCENT, bg=BG, anchor="w",
+        )
+        self._alert_right.place(x=410, y=5, width=370, height=40)
+
+        # --- Separator ---
+        tk.Frame(f, bg="#DDDDDD", height=2).place(x=20, y=188, width=W - 40, height=2)
+
+        # --- User buttons ---
+        btn_frame = tk.Frame(f, bg=BG)
+        btn_frame.place(x=0, y=193, width=W, height=235)
+
+        num_users = len(self._users)
+        if num_users == 0:
+            tk.Label(btn_frame, text="Sin usuarios configurados",
+                     font=("Helvetica", 16), fg=MUTED, bg=BG).place(
+                relx=0.5, rely=0.5, anchor="center")
+        else:
+            btn_w = (W - 40 - (num_users - 1) * 15) // num_users
+            for i, user in enumerate(self._users):
+                x = 20 + i * (btn_w + 15)
+                self._create_user_button(btn_frame, user, x, 5, btn_w, 225)
+
+        # --- Bottom status bar ---
+        bottom = tk.Frame(f, bg=CARD_BG, height=48)
+        bottom.place(x=0, y=H - 48, width=W, height=48)
+
+        self._status_dot = tk.Label(
+            bottom, text="\u25CF", font=("Helvetica", 14),
+            fg=SUCCESS, bg=CARD_BG,
+        )
+        self._status_dot.place(x=15, y=8, height=32)
+
+        self._status_label = tk.Label(
+            bottom, text="Maya: Lista", font=("Helvetica", 15),
+            fg=TEXT_SEC, bg=CARD_BG, anchor="w",
+        )
+        self._status_label.place(x=38, y=8, height=32)
+
+        self._mic_hint = tk.Label(
+            bottom, text="Di 'Oye Maya' o toca tu nombre",
+            font=("Helvetica", 13), fg=MUTED, bg=CARD_BG, anchor="e",
+        )
+        self._mic_hint.place(x=350, y=8, width=280, height=32)
+
+        # Config + Exit buttons (hidden in production mode)
+        if not self.config.get("production_mode", False):
+            config_btn = tk.Label(
+                bottom, text="\u2699", font=("Helvetica", 18),
+                fg=TEXT_SEC, bg=CARD_BG, cursor="hand2",
+            )
+            config_btn.place(x=W - 100, y=5, width=40, height=38)
+            config_btn.bind("<Button-1>", lambda e: self._show_config_screen())
+
+            exit_btn = tk.Label(
+                bottom, text="\u2716", font=("Helvetica", 16),
+                fg=DANGER, bg=CARD_BG, cursor="hand2",
+            )
+            exit_btn.place(x=W - 50, y=7, width=40, height=34)
+            exit_btn.bind("<Button-1>", lambda e: self._on_close_pressed())
+
+    def _create_user_button(self, parent, user, x, y, w, h):
+        """Create a large touchable user button with photo or initial."""
+        color = user["color"]
+        uid = user["id"]
+        name = user["name"]
+
+        btn = tk.Frame(parent, bg=color, cursor="hand2",
+                       highlightthickness=0, bd=0)
+        btn.place(x=x, y=y, width=w, height=h)
+
+        # Try to load photo
+        photo_label = None
+        base = os.path.join(os.path.dirname(__file__), "data", "photos")
+        for ext in (".jpg", ".jpeg", ".png"):
+            path = os.path.join(base, f"{uid}{ext}")
+            if os.path.isfile(path):
+                try:
+                    from PIL import Image, ImageTk, ImageDraw
+                    img = Image.open(path)
+                    size = min(w - 20, 90)
+                    img = img.resize((size, size), Image.LANCZOS)
+                    # Circular mask
+                    mask = Image.new("L", (size, size), 0)
+                    ImageDraw.Draw(mask).ellipse((0, 0, size, size), fill=255)
+                    img.putalpha(mask)
+                    tk_img = ImageTk.PhotoImage(img)
+                    self._photo_images[uid] = tk_img
+                    photo_label = tk.Label(btn, image=tk_img, bg=color, bd=0)
+                    photo_label.place(relx=0.5, y=10, anchor="n")
+                except Exception as e:
+                    log.warning("Error cargando foto %s: %s", uid, e)
+                break
+
+        if not photo_label:
+            # Show initial in circle
+            initial = name[0].upper() if name else "?"
+            circle = tk.Canvas(btn, width=80, height=80, bg=color,
+                               highlightthickness=0)
+            circle.place(relx=0.5, y=15, anchor="n")
+            # Lighter circle background
+            circle.create_oval(5, 5, 75, 75, fill="white", outline="")
+            circle.create_text(40, 40, text=initial,
+                               font=("Helvetica", 36, "bold"), fill=color)
+
+        # Name label
+        name_lbl = tk.Label(
+            btn, text=name, font=("Helvetica", 22, "bold"),
+            fg="white", bg=color,
+        )
+        name_lbl.place(relx=0.5, y=h - 35, anchor="center")
+
+        # Bind click to all children
+        for widget in [btn, name_lbl]:
+            widget.bind("<Button-1>", lambda e, u=uid: self._open_user_menu(u))
+        if photo_label:
+            photo_label.bind("<Button-1>", lambda e, u=uid: self._open_user_menu(u))
+
+    def _build_conversation_screen(self):
+        f = tk.Frame(self._container, bg=BG)
+        f.place(x=0, y=0, width=W, height=H)
+        self._screens["conversation"] = f
+
+        # Header
+        header = tk.Frame(f, bg=ACCENT, height=50)
+        header.place(x=0, y=0, width=W, height=50)
+
+        back_btn = tk.Label(
+            header, text="\u2190 Inicio", font=("Helvetica", 16, "bold"),
+            fg="white", bg=ACCENT, cursor="hand2",
+        )
+        back_btn.place(x=10, y=8, height=35)
+        back_btn.bind("<Button-1>", lambda e: self._conv_go_home())
+
+        self._conv_title = tk.Label(
+            header, text="Maya", font=("Helvetica", 20, "bold"),
+            fg="white", bg=ACCENT,
+        )
+        self._conv_title.place(x=130, y=8)
+
+        self._conv_status = tk.Label(
+            header, text="Escuchando...", font=("Helvetica", 16),
+            fg="#FFD0D0", bg=ACCENT, anchor="e",
+        )
+        self._conv_status.place(x=W - 220, y=12, width=200)
+
+        # User said
+        tk.Label(f, text="Dijiste:", font=("Helvetica", 13),
+                 fg=TEXT_SEC, bg=BG).place(x=20, y=65)
+
+        self._conv_transcript = tk.Label(
+            f, text="...", font=("Helvetica", 18),
+            fg=TEXT, bg=CARD_BG, anchor="nw", justify="left",
+            wraplength=W - 60, padx=15, pady=10,
+        )
+        self._conv_transcript.place(x=20, y=95, width=W - 40, height=100)
+
+        # Maya response
+        tk.Label(f, text="Maya:", font=("Helvetica", 13),
+                 fg=TEXT_SEC, bg=BG).place(x=20, y=210)
+
+        self._conv_response = tk.Label(
+            f, text="...", font=("Helvetica", 18),
+            fg=TEXT, bg=CARD_BG, anchor="nw", justify="left",
+            wraplength=W - 60, padx=15, pady=10,
+        )
+        self._conv_response.place(x=20, y=240, width=W - 40, height=120)
+
+        # Reminders
+        tk.Label(f, text="Recordatorios:", font=("Helvetica", 13, "bold"),
+                 fg=ACCENT, bg=BG).place(x=20, y=375)
+
+        self._conv_reminders = tk.Label(
+            f, text="", font=("Helvetica", 14),
+            fg=TEXT_SEC, bg=BG, anchor="nw", justify="left",
+            wraplength=380,
+        )
+        self._conv_reminders.place(x=20, y=400, width=400, height=70)
+
+        # Talk button
+        self._conv_talk_btn = tk.Button(
+            f, text="Toca para\nhablar", font=("Helvetica", 18, "bold"),
+            bg=SUCCESS, fg="white", activebackground="#219A52",
+            relief="flat", bd=0, command=self._on_talk_pressed,
+        )
+        self._conv_talk_btn.place(x=W - 220, y=380, width=200, height=90)
+
+    def _build_night_screen(self):
+        f = tk.Frame(self._container, bg=NIGHT_BG)
+        f.place(x=0, y=0, width=W, height=H)
+        self._screens["night"] = f
+
+        self._night_clock = tk.Label(
+            f, text="", font=("Helvetica", 100, "bold"),
+            fg=NIGHT_TEXT, bg=NIGHT_BG,
+        )
+        self._night_clock.place(relx=0.5, rely=0.45, anchor="center")
+
+        self._night_date = tk.Label(
+            f, text="", font=("Helvetica", 20),
+            fg="#555555", bg=NIGHT_BG,
+        )
+        self._night_date.place(relx=0.5, rely=0.65, anchor="center")
+
+        # Tap anywhere to wake
+        f.bind("<Button-1>", lambda e: self._exit_night_mode())
+
+    def _build_user_menu(self, user_id: str):
+        """Build or rebuild a user menu screen."""
+        screen_name = f"user_{user_id}"
+
+        # Destroy old if exists
+        if screen_name in self._screens:
+            self._screens[screen_name].destroy()
+
+        user = next((u for u in self._users if u["id"] == user_id), None)
+        if not user:
+            return
+        color = user["color"]
+        name = user["name"]
+
+        f = tk.Frame(self._container, bg=BG)
+        f.place(x=0, y=0, width=W, height=H)
+        self._screens[screen_name] = f
+
+        # Header with back button
+        header = tk.Frame(f, bg=color, height=55)
+        header.place(x=0, y=0, width=W, height=55)
+
+        back_btn = tk.Label(
+            header, text="\u2190 Inicio", font=("Helvetica", 16, "bold"),
+            fg="white", bg=color, cursor="hand2",
+        )
+        back_btn.place(x=15, y=10, height=35)
+        back_btn.bind("<Button-1>", lambda e: self._go_home())
+
+        tk.Label(
+            header, text=name, font=("Helvetica", 22, "bold"),
+            fg="white", bg=color,
+        ).place(relx=0.5, y=10, anchor="n")
+
+        # Action buttons grid (2 columns x 3 rows)
+        actions = [
+            ("Hablar con\nMaya", "\U0001F3A4", SUCCESS,
+             lambda u=user_id: self._user_talk(u)),
+            ("Mi dia", "\U0001F4CB", "#3498DB",
+             lambda u=user_id: self._show_my_day(u)),
+            ("Medicamentos", "\U0001F48A", "#E67E22",
+             lambda u=user_id: self._show_medications(u)),
+            ("Contactos", "\U0001F465", "#9B59B6",
+             lambda u=user_id: self._show_contacts(u)),
+            ("Recordatorios", "\u23F0", "#1ABC9C",
+             lambda u=user_id: self._show_reminders(u)),
+            ("Conoce a\nMaya", "\u2B50", ACCENT,
+             lambda u=user_id: self._start_onboarding(u)),
+        ]
+
+        btn_w = 235
+        btn_h = 120
+        start_x = 30
+        start_y = 70
+        gap_x = 25
+        gap_y = 15
+
+        for i, (label, icon, btn_color, cmd) in enumerate(actions):
+            col = i % 3
+            row = i // 3
+            bx = start_x + col * (btn_w + gap_x)
+            by = start_y + row * (btn_h + gap_y)
+
+            btn = tk.Frame(f, bg=btn_color, cursor="hand2")
+            btn.place(x=bx, y=by, width=btn_w, height=btn_h)
+
+            icon_lbl = tk.Label(
+                btn, text=icon, font=("Helvetica", 28),
+                fg="white", bg=btn_color,
+            )
+            icon_lbl.place(relx=0.5, y=15, anchor="n")
+
+            text_lbl = tk.Label(
+                btn, text=label, font=("Helvetica", 15, "bold"),
+                fg="white", bg=btn_color, justify="center",
+            )
+            text_lbl.place(relx=0.5, y=60, anchor="n")
+
+            for w in [btn, icon_lbl, text_lbl]:
+                w.bind("<Button-1>", lambda e, c=cmd: c())
+
+    def _build_medications_screen(self, user_id: str):
+        """Build medications list screen for a user."""
+        screen_name = f"meds_{user_id}"
+        if screen_name in self._screens:
+            self._screens[screen_name].destroy()
+
+        user = next((u for u in self._users if u["id"] == user_id), None)
+        if not user or not self.db:
+            return
+        color = user["color"]
+
+        f = tk.Frame(self._container, bg=BG)
+        f.place(x=0, y=0, width=W, height=H)
+        self._screens[screen_name] = f
+
+        # Header
+        header = tk.Frame(f, bg=color, height=55)
+        header.place(x=0, y=0, width=W, height=55)
+
+        back_btn = tk.Label(
+            header, text="\u2190 Menu", font=("Helvetica", 16, "bold"),
+            fg="white", bg=color, cursor="hand2",
+        )
+        back_btn.place(x=15, y=10, height=35)
+        back_btn.bind("<Button-1>",
+                      lambda e, u=user_id: self._open_user_menu(u))
+
+        tk.Label(
+            header, text=f"Medicamentos - {user['name']}",
+            font=("Helvetica", 20, "bold"), fg="white", bg=color,
+        ).place(relx=0.5, y=10, anchor="n")
+
+        # Scrollable area via canvas
+        canvas = tk.Canvas(f, bg=BG, highlightthickness=0)
+        canvas.place(x=0, y=60, width=W, height=H - 110)
+
+        inner = tk.Frame(canvas, bg=BG)
+        canvas.create_window((0, 0), window=inner, anchor="nw", width=W)
+
+        # Get medications and today's log
+        meds = self.db.get_medications(user_id, active_only=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        log_today = self.db.get_medication_log(user_id, date=today)
+        taken_ids = {entry["medication_id"] for entry in log_today}
+
+        if not meds:
+            tk.Label(inner, text="No hay medicamentos registrados",
+                     font=("Helvetica", 18), fg=MUTED, bg=BG,
+                     ).pack(pady=40)
+        else:
+            for med in meds:
+                taken = med["id"] in taken_ids
+                self._create_med_row(inner, med, taken, user_id, color)
+
+        # Bottom: home button
+        home_bar = tk.Frame(f, bg=CARD_BG, height=48)
+        home_bar.place(x=0, y=H - 48, width=W, height=48)
+        home_btn = tk.Label(
+            home_bar, text="\u2302 Inicio", font=("Helvetica", 16, "bold"),
+            fg=TEXT_SEC, bg=CARD_BG, cursor="hand2",
+        )
+        home_btn.place(relx=0.5, rely=0.5, anchor="center")
+        home_btn.bind("<Button-1>", lambda e: self._go_home())
+
+    def _create_med_row(self, parent, med, taken, user_id, color):
+        row = tk.Frame(parent, bg=CARD_BG, height=70)
+        row.pack(fill="x", padx=15, pady=5)
+        row.pack_propagate(False)
+
+        # Status indicator
+        status_color = SUCCESS if taken else WARNING
+        status_text = "\u2714 Tomado" if taken else "\u23F3 Pendiente"
+
+        tk.Label(
+            row, text="\u25CF", font=("Helvetica", 20),
+            fg=status_color, bg=CARD_BG,
+        ).place(x=10, y=15)
+
+        tk.Label(
+            row, text=med["name"], font=("Helvetica", 18, "bold"),
+            fg=TEXT, bg=CARD_BG, anchor="w",
+        ).place(x=40, y=8, width=300)
+
+        info = ""
+        if med.get("dosage"):
+            info += med["dosage"]
+        if med.get("schedule"):
+            info += f"  |  {med['schedule']}"
+        tk.Label(
+            row, text=info, font=("Helvetica", 13),
+            fg=TEXT_SEC, bg=CARD_BG, anchor="w",
+        ).place(x=40, y=38, width=400)
+
+        # Status / confirm button
+        if taken:
+            tk.Label(
+                row, text=status_text, font=("Helvetica", 14, "bold"),
+                fg=SUCCESS, bg=CARD_BG,
+            ).place(x=W - 180, y=18, width=150, anchor="nw")
+        else:
+            confirm_btn = tk.Label(
+                row, text="Marcar tomado", font=("Helvetica", 14, "bold"),
+                fg="white", bg=SUCCESS, cursor="hand2",
+                padx=10, pady=5,
+            )
+            confirm_btn.place(x=W - 200, y=12, width=160, height=45)
+            confirm_btn.bind("<Button-1>",
+                             lambda e, m=med, u=user_id:
+                             self._confirm_med(m["id"], u))
+
+    def _build_contacts_screen(self, user_id: str):
+        screen_name = f"contacts_{user_id}"
+        if screen_name in self._screens:
+            self._screens[screen_name].destroy()
+
+        user = next((u for u in self._users if u["id"] == user_id), None)
+        if not user or not self.db:
+            return
+        color = user["color"]
+
+        f = tk.Frame(self._container, bg=BG)
+        f.place(x=0, y=0, width=W, height=H)
+        self._screens[screen_name] = f
+
+        # Header
+        header = tk.Frame(f, bg=color, height=55)
+        header.place(x=0, y=0, width=W, height=55)
+        back_btn = tk.Label(header, text="\u2190 Menu",
+                            font=("Helvetica", 16, "bold"),
+                            fg="white", bg=color, cursor="hand2")
+        back_btn.place(x=15, y=10, height=35)
+        back_btn.bind("<Button-1>", lambda e, u=user_id: self._open_user_menu(u))
+
+        tk.Label(header, text=f"Contactos - {user['name']}",
+                 font=("Helvetica", 20, "bold"), fg="white", bg=color,
+                 ).place(relx=0.5, y=10, anchor="n")
+
+        contacts = self.db.get_contacts(user_id)
+        y = 70
+        if not contacts:
+            tk.Label(f, text="No hay contactos registrados",
+                     font=("Helvetica", 18), fg=MUTED, bg=BG).place(x=20, y=y)
+        else:
+            for c in contacts[:6]:
+                row = tk.Frame(f, bg=CARD_BG, height=60)
+                row.place(x=15, y=y, width=W - 30, height=55)
+                tk.Label(row, text=c["name"], font=("Helvetica", 17, "bold"),
+                         fg=TEXT, bg=CARD_BG).place(x=15, y=5)
+                info = c.get("relationship", "")
+                if c.get("phone"):
+                    info += f"  |  {c['phone']}"
+                tk.Label(row, text=info, font=("Helvetica", 13),
+                         fg=TEXT_SEC, bg=CARD_BG).place(x=15, y=30)
+                y += 62
+
+        # Bottom home
+        home_bar = tk.Frame(f, bg=CARD_BG, height=48)
+        home_bar.place(x=0, y=H - 48, width=W, height=48)
+        home_btn = tk.Label(home_bar, text="\u2302 Inicio",
+                            font=("Helvetica", 16, "bold"),
+                            fg=TEXT_SEC, bg=CARD_BG, cursor="hand2")
+        home_btn.place(relx=0.5, rely=0.5, anchor="center")
+        home_btn.bind("<Button-1>", lambda e: self._go_home())
+
+    def _build_reminders_screen(self, user_id: str):
+        screen_name = f"reminders_{user_id}"
+        if screen_name in self._screens:
+            self._screens[screen_name].destroy()
+
+        user = next((u for u in self._users if u["id"] == user_id), None)
+        if not user or not self.db:
+            return
+        color = user["color"]
+
+        f = tk.Frame(self._container, bg=BG)
+        f.place(x=0, y=0, width=W, height=H)
+        self._screens[screen_name] = f
+
+        header = tk.Frame(f, bg=color, height=55)
+        header.place(x=0, y=0, width=W, height=55)
+        back_btn = tk.Label(header, text="\u2190 Menu",
+                            font=("Helvetica", 16, "bold"),
+                            fg="white", bg=color, cursor="hand2")
+        back_btn.place(x=15, y=10, height=35)
+        back_btn.bind("<Button-1>", lambda e, u=user_id: self._open_user_menu(u))
+
+        tk.Label(header, text=f"Recordatorios - {user['name']}",
+                 font=("Helvetica", 20, "bold"), fg="white", bg=color,
+                 ).place(relx=0.5, y=10, anchor="n")
+
+        reminders = self.db.get_pending_reminders(user_id)
+        y = 70
+        if not reminders:
+            tk.Label(f, text="No hay recordatorios pendientes",
+                     font=("Helvetica", 18), fg=MUTED, bg=BG).place(x=20, y=y)
+        else:
+            for r in reminders[:7]:
+                row = tk.Frame(f, bg=CARD_BG, height=50)
+                row.place(x=15, y=y, width=W - 30, height=48)
+                tk.Label(row, text=f"\u23F0 {r['remind_at']}",
+                         font=("Helvetica", 16, "bold"),
+                         fg=ACCENT, bg=CARD_BG).place(x=15, y=10)
+                tk.Label(row, text=r["text"], font=("Helvetica", 15),
+                         fg=TEXT, bg=CARD_BG).place(x=120, y=10)
+                y += 55
+
+        # Bottom home
+        home_bar = tk.Frame(f, bg=CARD_BG, height=48)
+        home_bar.place(x=0, y=H - 48, width=W, height=48)
+        home_btn = tk.Label(home_bar, text="\u2302 Inicio",
+                            font=("Helvetica", 16, "bold"),
+                            fg=TEXT_SEC, bg=CARD_BG, cursor="hand2")
+        home_btn.place(relx=0.5, rely=0.5, anchor="center")
+        home_btn.bind("<Button-1>", lambda e: self._go_home())
+
+    def _build_my_day_screen(self, user_id: str):
+        screen_name = f"myday_{user_id}"
+        if screen_name in self._screens:
+            self._screens[screen_name].destroy()
+
+        user = next((u for u in self._users if u["id"] == user_id), None)
+        if not user or not self.db:
+            return
+        color = user["color"]
+
+        f = tk.Frame(self._container, bg=BG)
+        f.place(x=0, y=0, width=W, height=H)
+        self._screens[screen_name] = f
+
+        header = tk.Frame(f, bg=color, height=55)
+        header.place(x=0, y=0, width=W, height=55)
+        back_btn = tk.Label(header, text="\u2190 Menu",
+                            font=("Helvetica", 16, "bold"),
+                            fg="white", bg=color, cursor="hand2")
+        back_btn.place(x=15, y=10, height=35)
+        back_btn.bind("<Button-1>", lambda e, u=user_id: self._open_user_menu(u))
+
+        tk.Label(header, text=f"Mi dia - {user['name']}",
+                 font=("Helvetica", 20, "bold"), fg="white", bg=color,
+                 ).place(relx=0.5, y=10, anchor="n")
+
+        y = 70
+
+        # Weather
+        if self.weather:
+            wd = self.weather.data
+            if wd:
+                icon = _weather_icon(wd.get("icon", ""))
+                tk.Label(f, text=f"{icon} {wd['temp']}\u00B0C - {wd['description']}",
+                         font=("Helvetica", 20), fg=TEXT, bg=BG).place(x=20, y=y)
+                y += 40
+
+        # Medications status
+        tk.Label(f, text="Medicamentos:", font=("Helvetica", 17, "bold"),
+                 fg=WARNING, bg=BG).place(x=20, y=y)
+        y += 30
+
+        meds = self.db.get_medications(user_id, active_only=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        log_today = self.db.get_medication_log(user_id, date=today)
+        taken_ids = {e["medication_id"] for e in log_today}
+
+        if not meds:
+            tk.Label(f, text="  Sin medicamentos", font=("Helvetica", 15),
+                     fg=MUTED, bg=BG).place(x=20, y=y)
+            y += 25
+        else:
+            for med in meds:
+                taken = med["id"] in taken_ids
+                icon = "\u2714" if taken else "\u23F3"
+                clr = SUCCESS if taken else WARNING
+                tk.Label(f, text=f"  {icon} {med['name']}",
+                         font=("Helvetica", 15), fg=clr, bg=BG).place(x=20, y=y)
+                y += 25
+
+        y += 15
+
+        # Reminders
+        tk.Label(f, text="Recordatorios:", font=("Helvetica", 17, "bold"),
+                 fg=ACCENT, bg=BG).place(x=20, y=y)
+        y += 30
+
+        reminders = self.db.get_pending_reminders(user_id)
+        if not reminders:
+            tk.Label(f, text="  Sin recordatorios", font=("Helvetica", 15),
+                     fg=MUTED, bg=BG).place(x=20, y=y)
+        else:
+            for r in reminders[:5]:
+                tk.Label(f, text=f"  \u23F0 {r['remind_at']} - {r['text']}",
+                         font=("Helvetica", 15), fg=TEXT, bg=BG).place(x=20, y=y)
+                y += 25
+
+        # Bottom home
+        home_bar = tk.Frame(f, bg=CARD_BG, height=48)
+        home_bar.place(x=0, y=H - 48, width=W, height=48)
+        home_btn = tk.Label(home_bar, text="\u2302 Inicio",
+                            font=("Helvetica", 16, "bold"),
+                            fg=TEXT_SEC, bg=CARD_BG, cursor="hand2")
+        home_btn.place(relx=0.5, rely=0.5, anchor="center")
+        home_btn.bind("<Button-1>", lambda e: self._go_home())
+
+    def _build_config_screen(self):
+        screen_name = "config"
+        if screen_name in self._screens:
+            self._screens[screen_name].destroy()
+
+        f = tk.Frame(self._container, bg=BG)
+        f.place(x=0, y=0, width=W, height=H)
+        self._screens[screen_name] = f
+
+        header = tk.Frame(f, bg="#34495E", height=55)
+        header.place(x=0, y=0, width=W, height=55)
+        back_btn = tk.Label(header, text="\u2190 Inicio",
+                            font=("Helvetica", 16, "bold"),
+                            fg="white", bg="#34495E", cursor="hand2")
+        back_btn.place(x=15, y=10, height=35)
+        back_btn.bind("<Button-1>", lambda e: self._go_home())
+
+        tk.Label(header, text="Configuracion",
+                 font=("Helvetica", 20, "bold"), fg="white", bg="#34495E",
+                 ).place(relx=0.5, y=10, anchor="n")
+
+        y = 75
+
+        # --- Bluetooth section ---
+        tk.Label(f, text="Bluetooth - Bocina/Microfono",
+                 font=("Helvetica", 18, "bold"), fg=TEXT, bg=BG,
+                 ).place(x=20, y=y)
+        y += 35
+
+        self._bt_status_label = tk.Label(
+            f, text="Verificando...", font=("Helvetica", 15),
+            fg=TEXT_SEC, bg=BG, anchor="w",
+        )
+        self._bt_status_label.place(x=20, y=y, width=500)
+
+        bt_reconnect = tk.Label(
+            f, text="Reconectar", font=("Helvetica", 15, "bold"),
+            fg="white", bg="#3498DB", cursor="hand2", padx=15, pady=5,
+        )
+        bt_reconnect.place(x=W - 170, y=y - 5, width=150, height=40)
+        bt_reconnect.bind("<Button-1>", lambda e: self._bt_reconnect())
+        y += 50
+
+        # --- WiFi section ---
+        tk.Frame(f, bg="#DDDDDD", height=2).place(x=20, y=y, width=W - 40)
+        y += 15
+
+        tk.Label(f, text="WiFi",
+                 font=("Helvetica", 18, "bold"), fg=TEXT, bg=BG,
+                 ).place(x=20, y=y)
+        y += 35
+
+        self._wifi_status_label = tk.Label(
+            f, text="Verificando...", font=("Helvetica", 15),
+            fg=TEXT_SEC, bg=BG, anchor="w",
+        )
+        self._wifi_status_label.place(x=20, y=y, width=600)
+        y += 35
+
+        self._wifi_ip_label = tk.Label(
+            f, text="", font=("Helvetica", 14),
+            fg=MUTED, bg=BG, anchor="w",
+        )
+        self._wifi_ip_label.place(x=20, y=y, width=600)
+        y += 50
+
+        # --- System info ---
+        tk.Frame(f, bg="#DDDDDD", height=2).place(x=20, y=y, width=W - 40)
+        y += 15
+
+        tk.Label(f, text="Sistema",
+                 font=("Helvetica", 18, "bold"), fg=TEXT, bg=BG,
+                 ).place(x=20, y=y)
+        y += 35
+
+        self._sys_info_label = tk.Label(
+            f, text="", font=("Helvetica", 14),
+            fg=TEXT_SEC, bg=BG, anchor="nw", justify="left",
+        )
+        self._sys_info_label.place(x=20, y=y, width=600, height=60)
+
+        # Bottom home
+        home_bar = tk.Frame(f, bg=CARD_BG, height=48)
+        home_bar.place(x=0, y=H - 48, width=W, height=48)
+        home_btn = tk.Label(home_bar, text="\u2302 Inicio",
+                            font=("Helvetica", 16, "bold"),
+                            fg=TEXT_SEC, bg=CARD_BG, cursor="hand2")
+        home_btn.place(relx=0.5, rely=0.5, anchor="center")
+        home_btn.bind("<Button-1>", lambda e: self._go_home())
+
+        # Fetch status in background
+        threading.Thread(target=self._fetch_config_status, daemon=True).start()
+
+    def _fetch_config_status(self):
+        """Fetch BT, WiFi, system info in background thread."""
+        import subprocess
+
+        # Bluetooth
+        try:
+            bt_mac = self.config.get("audio", {}).get("bt_device_mac", "")
+            if bt_mac:
+                result = subprocess.run(
+                    ["bluetoothctl", "info", bt_mac],
+                    capture_output=True, text=True, timeout=5,
+                )
+                if "Connected: yes" in result.stdout:
+                    name = ""
+                    for line in result.stdout.splitlines():
+                        if "Name:" in line:
+                            name = line.split("Name:")[1].strip()
+                    bt_text = f"Conectado: {name} ({bt_mac})"
+                    bt_color = SUCCESS
+                else:
+                    bt_text = f"Desconectado: {bt_mac}"
+                    bt_color = WARNING
+            else:
+                bt_text = "No configurado"
+                bt_color = MUTED
+        except Exception:
+            bt_text = "Error verificando Bluetooth"
+            bt_color = DANGER
+
+        self.queue.put({"type": "_config_bt", "text": bt_text, "color": bt_color})
+
+        # WiFi
+        try:
+            result = subprocess.run(
+                ["nmcli", "-t", "-f", "ACTIVE,SSID,SIGNAL", "dev", "wifi"],
+                capture_output=True, text=True, timeout=5,
+            )
+            wifi_text = "No conectado"
+            for line in result.stdout.strip().splitlines():
+                parts = line.split(":")
+                if parts[0] == "yes":
+                    wifi_text = f"Conectado: {parts[1]} (senal: {parts[2]}%)"
+                    break
+        except Exception:
+            wifi_text = "Error verificando WiFi"
+
+        # IP
+        try:
+            result = subprocess.run(
+                ["hostname", "-I"], capture_output=True, text=True, timeout=3,
+            )
+            ip_text = f"IP: {result.stdout.strip()}"
+        except Exception:
+            ip_text = ""
+
+        self.queue.put({"type": "_config_wifi", "text": wifi_text, "ip": ip_text})
+
+        # System
+        try:
+            with open("/proc/uptime") as uf:
+                uptime_s = float(uf.read().split()[0])
+                hours = int(uptime_s // 3600)
+                mins = int((uptime_s % 3600) // 60)
+                uptime = f"Encendido: {hours}h {mins}m"
+
+            with open("/sys/class/thermal/thermal_zone0/temp") as tf:
+                temp = int(tf.read().strip()) / 1000
+                temp_text = f"Temperatura: {temp:.1f} C"
+
+            sys_text = f"{uptime}  |  {temp_text}"
+        except Exception:
+            sys_text = ""
+
+        self.queue.put({"type": "_config_sys", "text": sys_text})
+
+    def _bt_reconnect(self):
+        """Try to reconnect Bluetooth speaker."""
+        import subprocess
+        bt_mac = self.config.get("audio", {}).get("bt_device_mac", "")
+        if not bt_mac:
+            return
+        if hasattr(self, "_bt_status_label"):
+            self.queue.put({"type": "_config_bt",
+                           "text": "Reconectando...", "color": WARNING})
+
+        def _do_reconnect():
+            try:
+                subprocess.run(
+                    ["bluetoothctl", "connect", bt_mac],
+                    capture_output=True, timeout=10,
+                )
+            except Exception:
+                pass
+            # Re-fetch status
+            self._fetch_config_status()
+
+        threading.Thread(target=_do_reconnect, daemon=True).start()
+
+    def _show_config_screen(self):
+        self._build_config_screen()
+        self._show_screen("config")
+
+    # ===== NAVIGATION =====
+
+    def _show_screen(self, name):
+        if name in self._screens:
+            self._screens[name].lift()
+            self._current_screen = name
+            self._reset_auto_return()
+
+    def _go_home(self):
+        self._cancel_auto_return()
+        self._refresh_main_screen()
+        self._show_screen("main")
+
+    def _open_user_menu(self, user_id):
+        self._build_user_menu(user_id)
+        self._show_screen(f"user_{user_id}")
+
+    def _show_medications(self, user_id):
+        self._build_medications_screen(user_id)
+        self._show_screen(f"meds_{user_id}")
+
+    def _show_contacts(self, user_id):
+        self._build_contacts_screen(user_id)
+        self._show_screen(f"contacts_{user_id}")
+
+    def _show_reminders(self, user_id):
+        self._build_reminders_screen(user_id)
+        self._show_screen(f"reminders_{user_id}")
+
+    def _show_my_day(self, user_id):
+        self._build_my_day_screen(user_id)
+        self._show_screen(f"myday_{user_id}")
+
+    def _start_onboarding(self, user_id):
+        # Trigger onboarding via voice — will be expanded in Phase 3
+        self.active_user_id = user_id
+        if self.on_user_talk:
+            threading.Thread(
+                target=self.on_user_talk,
+                args=(user_id, "onboarding"),
+                daemon=True,
+            ).start()
+
+    def _user_talk(self, user_id):
+        self.active_user_id = user_id
+        if self.on_user_talk:
+            threading.Thread(
+                target=self.on_user_talk,
+                args=(user_id, "talk"),
+                daemon=True,
+            ).start()
+
+    def _confirm_med(self, med_id, user_id):
+        if self.db:
+            self.db.confirm_medication(med_id, user_id)
+            # Rebuild medications screen
+            self._show_medications(user_id)
+
+    def _conv_go_home(self):
+        """Return home from conversation screen, clearing user context."""
+        self.active_user_id = None
+        self._go_home()
+
+    def _on_alert_tap(self, event):
+        """Tap on medication alert -> open first user's medications."""
+        if self._users:
+            self._show_medications(self._users[0]["id"])
+
+    # ===== AUTO-RETURN =====
+
+    def _reset_auto_return(self):
+        self._cancel_auto_return()
+        if self._current_screen not in ("main", "night", "conversation"):
+            self._auto_return_after_id = self.root.after(
+                AUTO_RETURN_MS, self._go_home)
+
+    def _cancel_auto_return(self):
+        if self._auto_return_after_id and self.root:
+            self.root.after_cancel(self._auto_return_after_id)
+            self._auto_return_after_id = None
+
+    # ===== NIGHT MODE =====
+
+    def _check_night_mode(self):
+        if not self._running:
+            return
+        hour = datetime.now().hour
+        should_night = hour >= NIGHT_START or hour < NIGHT_END
+
+        if should_night and not self._night_mode and self._current_screen == "main":
+            self._enter_night_mode()
+        elif not should_night and self._night_mode:
+            self._exit_night_mode()
+
+        if self.root:
+            self.root.after(60_000, self._check_night_mode)  # check every minute
+
+    def _enter_night_mode(self):
+        self._night_mode = True
+        self._show_screen("night")
+
+    def _exit_night_mode(self):
+        self._night_mode = False
+        self._go_home()
+
+    # ===== TIMER CALLBACKS =====
 
     def _update_clock(self):
         if not self._running:
             return
         now = datetime.now()
-        self.clock_label.config(text=now.strftime("%H:%M"))
-        self.date_label.config(text=now.strftime("%A %d de %B"))
+        time_str = now.strftime("%H:%M")
+        day_name = DAYS[now.weekday()]
+        date_str = f"{day_name} {now.day} de {MONTHS[now.month]}"
+
+        # Main screen clock
+        if hasattr(self, "_clock_label"):
+            self._clock_label.config(text=time_str)
+            self._date_label.config(text=date_str)
+            self._greeting_label.config(text=_greeting())
+
+        # Night screen clock
+        if hasattr(self, "_night_clock"):
+            self._night_clock.config(text=time_str)
+            self._night_date.config(text=date_str)
+
+        # Update weather on main screen
+        if self.weather and hasattr(self, "_weather_label"):
+            wd = self.weather.data
+            if wd:
+                icon = _weather_icon(wd.get("icon", ""))
+                self._weather_label.config(
+                    text=f"{icon} {wd['temp']}\u00B0C  {wd['description']}")
+
+        # Update alerts
+        self._update_alerts()
+
         if self.root:
             self.root.after(1000, self._update_clock)
+
+    def _update_alerts(self):
+        if not self.db or not hasattr(self, "_alert_left"):
+            return
+
+        # Left alert: medication status
+        today = datetime.now().strftime("%Y-%m-%d")
+        pending_count = 0
+        for user in self._users:
+            meds = self.db.get_medications(user["id"], active_only=True)
+            log_today = self.db.get_medication_log(user["id"], date=today)
+            taken_ids = {e["medication_id"] for e in log_today}
+            pending_count += sum(1 for m in meds if m["id"] not in taken_ids)
+
+        if pending_count > 0:
+            self._alert_left.config(
+                text=f"\U0001F48A {pending_count} medicamento(s) pendiente(s)",
+                fg=WARNING,
+            )
+        else:
+            self._alert_left.config(text="\u2714 Medicamentos al dia", fg=SUCCESS)
+
+        # Right alert: next reminder
+        try:
+            all_rem = self.db.get_all_active_reminders()
+            now_str = datetime.now().strftime("%H:%M")
+            upcoming = [r for r in all_rem if r["remind_at"] >= now_str]
+            if upcoming:
+                r = upcoming[0]
+                self._alert_right.config(
+                    text=f"\u23F0 {r['remind_at']} - {r['text']}",
+                    fg=ACCENT,
+                )
+            else:
+                self._alert_right.config(text="", fg=ACCENT)
+        except Exception:
+            pass
+
+    def _refresh_main_screen(self):
+        """Refresh dynamic content on main screen."""
+        self._update_alerts()
+        if self.weather and hasattr(self, "_weather_label"):
+            wd = self.weather.data
+            if wd:
+                icon = _weather_icon(wd.get("icon", ""))
+                self._weather_label.config(
+                    text=f"{icon} {wd['temp']}\u00B0C  {wd['description']}")
+
+    # ===== QUEUE PROCESSING =====
 
     def _process_queue(self):
         if not self._running:
@@ -185,33 +1165,79 @@ class Display:
 
     def _handle_message(self, msg: dict):
         kind = msg.get("type", "")
+
         if kind == "status":
-            self.status_label.config(text=msg["text"])
-            color = msg.get("color", "#4ecca3")
-            self.status_label.config(fg=color)
-        elif kind == "user":
-            self.user_label.config(text=msg.get("name", ""))
+            text = msg["text"]
+            color = msg.get("color", SUCCESS)
+            # Update conversation screen
+            if hasattr(self, "_conv_status"):
+                self._conv_status.config(text=text)
+            # Update main screen status
+            if hasattr(self, "_status_label"):
+                self._status_label.config(text=f"Maya: {text}")
+                self._status_dot.config(fg=color)
+
         elif kind == "transcript":
-            self.transcript_label.config(text=msg["text"])
+            if hasattr(self, "_conv_transcript"):
+                self._conv_transcript.config(text=msg["text"])
+
         elif kind == "response":
-            self.response_label.config(text=msg["text"])
+            if hasattr(self, "_conv_response"):
+                self._conv_response.config(text=msg["text"])
+
         elif kind == "reminders":
-            self.reminders_label.config(text=msg["text"])
+            if hasattr(self, "_conv_reminders"):
+                self._conv_reminders.config(text=msg["text"])
+
+        elif kind == "user":
+            name = msg.get("name", "")
+            if hasattr(self, "_conv_title"):
+                self._conv_title.config(text=f"Maya - {name}")
+
+        elif kind == "show_conversation":
+            self._show_screen("conversation")
+
+        elif kind == "show_main":
+            self._go_home()
+
+        elif kind == "_config_bt":
+            if hasattr(self, "_bt_status_label"):
+                self._bt_status_label.config(
+                    text=msg["text"], fg=msg.get("color", TEXT_SEC))
+
+        elif kind == "_config_wifi":
+            if hasattr(self, "_wifi_status_label"):
+                self._wifi_status_label.config(text=msg["text"])
+            if hasattr(self, "_wifi_ip_label"):
+                self._wifi_ip_label.config(text=msg.get("ip", ""))
+
+        elif kind == "_config_sys":
+            if hasattr(self, "_sys_info_label"):
+                self._sys_info_label.config(text=msg["text"])
+
         elif kind == "talk_btn":
-            # Enable/disable talk button
-            if self._talk_btn:
+            if hasattr(self, "_conv_talk_btn"):
                 if msg.get("enabled", True):
-                    self._talk_btn.config(
-                        state="normal", bg="#4ecca3", text="Toca para\nhablar",
-                    )
+                    self._conv_talk_btn.config(
+                        state="normal", bg=SUCCESS, text="Toca para\nhablar")
                 else:
-                    self._talk_btn.config(
-                        state="disabled", bg="#2a4a3a", text="Procesando...",
-                    )
+                    self._conv_talk_btn.config(
+                        state="disabled", bg="#88BB88", text="Procesando...")
 
-    # --- Public API (thread-safe) ---
+    # ===== EVENT HANDLERS =====
 
-    def set_status(self, text: str, color: str = "#4ecca3"):
+    def _on_talk_pressed(self):
+        if self.on_talk:
+            threading.Thread(target=self.on_talk, daemon=True).start()
+
+    def _on_close_pressed(self):
+        if self.on_close:
+            self.on_close()
+        self.stop()
+
+    # ===== PUBLIC API (thread-safe) =====
+
+    def set_status(self, text: str, color: str = SUCCESS):
         self.queue.put({"type": "status", "text": text, "color": color})
 
     def set_user(self, name: str):
@@ -228,6 +1254,12 @@ class Display:
 
     def enable_talk_btn(self, enabled: bool = True):
         self.queue.put({"type": "talk_btn", "enabled": enabled})
+
+    def show_conversation(self):
+        self.queue.put({"type": "show_conversation"})
+
+    def show_main(self):
+        self.queue.put({"type": "show_main"})
 
     def stop(self):
         self._running = False

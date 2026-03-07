@@ -1,0 +1,47 @@
+{% extends "admin_base.html" %}
+{% block title_extra %} - Memorias de {{ user.real_name }}{% endblock %}
+{% block content %}
+{% include "admin_user_header.html" %}
+<div class="card">
+    <h2>Memorias</h2>
+    <p style="color:#8899aa;font-size:0.85em;margin-bottom:12px">
+        Estas son las cosas que Maya recuerda sobre {{ user.real_name }}.
+        Se guardan durante conversaciones y el onboarding.
+    </p>
+
+    {% if memories %}
+    <table>
+        <thead>
+            <tr>
+                <th>Categoria</th>
+                <th>Contenido</th>
+                <th>Fecha</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for m in memories %}
+            <tr>
+                <td><span class="badge badge-active">{{ m.category }}</span></td>
+                <td>{{ m.content }}</td>
+                <td style="color:#8899aa;font-size:0.85em">{{ m.updated_at[:16] }}</td>
+                <td>
+                    <form method="post" action="/memories/delete/{{ m.id }}"
+                          onsubmit="return confirm('Eliminar esta memoria?')">
+                        <input type="hidden" name="user_id" value="{{ user.id }}">
+                        <button type="submit" class="btn btn-danger btn-small">X</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color:#8899aa">No hay memorias guardadas aun.</p>
+    {% endif %}
+</div>
+
+<div style="margin-top:12px">
+    <a href="/">&larr; Inicio</a>
+</div>
+{% endblock %}
