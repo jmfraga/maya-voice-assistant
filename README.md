@@ -8,14 +8,17 @@ Asistente de voz diseñada para personas mayores, ejecutándose en Raspberry Pi 
 - **Tap-to-talk**: Botón en pantalla táctil DSI como alternativa al wake word
 - **Follow-up automático**: Escucha respuesta del usuario tras cada interacción sin requerir wake word
 - **STT**: OpenAI Whisper API (primario) + whisper.cpp (fallback local)
-- **TTS**: OpenAI TTS voz "nova" (primario) / ElevenLabs (alternativo) / Piper local (fallback)
+- **TTS**: OpenAI TTS voz "shimmer" (primario) / ElevenLabs (alternativo) / Piper local (fallback)
 - **LLM**: Claude API (Anthropic) para generar respuestas naturales en español mexicano
 - **Speaker ID**: Identificación de hablante con resemblyzer (opcional)
 - **Telegram**: Bot con auto-registro y aprobación de contactos
 - **Recordatorios**: Creación y notificación de recordatorios por voz
 - **Medicamentos**: Registro y confirmación de tomas
-- **Panel admin**: Interfaz web Flask para configuración remota (API keys, voces, contactos)
-- **Display**: Interfaz Tkinter fullscreen en pantalla DSI (reloj, transcripción, respuesta)
+- **Esquemas de tratamiento**: Dosis variable según mediciones (ej. glucosa → insulina), con alertas a familiares por Telegram si la medición sale de rango
+- **Memoria inteligente**: Guardado con deduplicación y manejo de contradicciones vía LLM
+- **Onboarding por voz**: Proceso guiado "Conoce a Maya" para nuevos usuarios
+- **Panel admin**: Interfaz web Flask para configuración remota (medicamentos, tratamientos, contactos, memorias, API keys)
+- **Display**: Interfaz Tkinter multi-pantalla fullscreen en pantalla DSI (reloj, clima, medicamentos, contactos, recordatorios)
 
 ## Módulos
 
@@ -27,7 +30,8 @@ Asistente de voz diseñada para personas mayores, ejecutándose en Raspberry Pi 
 | `stt.py` | Speech-to-text (OpenAI API / whisper.cpp) |
 | `tts.py` | Text-to-speech (OpenAI / ElevenLabs / Piper) |
 | `llm.py` | Integración con Claude/OpenAI, contexto y parsing de acciones |
-| `db.py` | SQLite: usuarios, medicamentos, contactos, recordatorios, conversaciones |
+| `db.py` | SQLite: usuarios, medicamentos, contactos, recordatorios, conversaciones, esquemas de tratamiento, mediciones |
+| `weather.py` | Clima via OpenWeatherMap con refresh automático |
 | `speaker_id.py` | Identificación de hablante por voiceprint |
 | `telegram_bot.py` | Bot de Telegram con auto-registro |
 | `display.py` | Interfaz gráfica Tkinter para pantalla DSI |
@@ -72,4 +76,4 @@ O lanzar desde el dashboard del Pi (Proyectos → Maya).
 
 ## Licencia
 
-Proyecto privado.
+MIT

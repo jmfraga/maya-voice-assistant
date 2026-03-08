@@ -79,6 +79,43 @@ CREATE TABLE IF NOT EXISTS memories (
     created_at TEXT DEFAULT (datetime('now', 'localtime')),
     updated_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
+
+CREATE TABLE IF NOT EXISTS treatment_schemas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    name TEXT NOT NULL,
+    measurement_name TEXT NOT NULL,
+    measurement_unit TEXT DEFAULT '',
+    alert_low REAL,
+    alert_high REAL,
+    alert_contacts TEXT DEFAULT '',
+    active INTEGER DEFAULT 1,
+    notes TEXT,
+    updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS treatment_ranges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    schema_id INTEGER NOT NULL REFERENCES treatment_schemas(id),
+    range_min REAL NOT NULL,
+    range_max REAL NOT NULL,
+    dose REAL NOT NULL,
+    dose_unit TEXT DEFAULT '',
+    time_of_day TEXT DEFAULT 'any',
+    notes TEXT
+);
+
+CREATE TABLE IF NOT EXISTS measurement_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    schema_id INTEGER REFERENCES treatment_schemas(id),
+    measurement_value REAL NOT NULL,
+    dose_given REAL,
+    dose_unit TEXT,
+    alert_sent INTEGER DEFAULT 0,
+    notes TEXT,
+    measured_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
 """
 
 
@@ -124,6 +161,10 @@ class Database:
 
     def delete_user(self, user_id: str):
         with self._conn() as conn:
+            conn.execute("DELETE FROM measurement_log WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM treatment_ranges WHERE schema_id IN "
+                         "(SELECT id FROM treatment_schemas WHERE user_id = ?)", (user_id,))
+            conn.execute("DELETE FROM treatment_schemas WHERE user_id = ?", (user_id,))
             conn.execute("DELETE FROM memories WHERE user_id = ?", (user_id,))
             conn.execute("DELETE FROM conversations WHERE user_id = ?", (user_id,))
             conn.execute("DELETE FROM medication_log WHERE user_id = ?", (user_id,))
@@ -420,3 +461,152 @@ class Database:
                 (chat_id, chat_id),
             ).fetchone()
             return row is not None
+
+    # --- Treatment Schemas ---
+    def add_treatment_schema(self, user_id: str, name: str, measurement_name: str,
+                             measurement_unit: str = "", alert_low: float | None = None,
+                             alert_high: float | None = None, alert_contacts: str = "",
+                             notes: str = "") -> int:
+        with self._conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO treatment_schemas "
+                "(user_id, name, measurement_name, measurement_unit, alert_low, alert_high, alert_contacts, notes) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (user_id, name, measurement_name, measurement_unit, alert_low, alert_high, alert_contacts, notes),
+            )
+            log.info("Esquema de tratamiento creado: %s para %s", name, user_id)
+            return cur.lastrowid
+
+    def get_treatment_schemas(self, user_id: str, active_only: bool = True) -> list[dict]:
+        with self._conn() as conn:
+            q = "SELECT * FROM treatment_schemas WHERE user_id = ?"
+            params: list = [user_id]
+            if active_only:
+                q += " AND active = 1"
+            rows = conn.execute(q + " ORDER BY name", params).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_treatment_schema(self, schema_id: int) -> dict | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM treatment_schemas WHERE id = ?", (schema_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def update_treatment_schema(self, schema_id: int, **kwargs):
+        allowed = {"name", "measurement_name", "measurement_unit", "alert_low",
+                    "alert_high", "alert_contacts", "notes", "active"}
+        fields = {k: v for k, v in kwargs.items() if k in allowed}
+        if not fields:
+            return
+        fields["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        vals = list(fields.values()) + [schema_id]
+        with self._conn() as conn:
+            conn.execute(f"UPDATE treatment_schemas SET {sets} WHERE id = ?", vals)
+
+    def delete_treatment_schema(self, schema_id: int):
+        with self._conn() as conn:
+            conn.execute("DELETE FROM treatment_ranges WHERE schema_id = ?", (schema_id,))
+            conn.execute("DELETE FROM measurement_log WHERE schema_id = ?", (schema_id,))
+            conn.execute("DELETE FROM treatment_schemas WHERE id = ?", (schema_id,))
+            log.info("Esquema de tratamiento %d eliminado", schema_id)
+
+    # --- Treatment Ranges ---
+    def add_treatment_range(self, schema_id: int, range_min: float, range_max: float,
+                            dose: float, dose_unit: str = "", time_of_day: str = "any",
+                            notes: str = "") -> int:
+        with self._conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO treatment_ranges (schema_id, range_min, range_max, dose, dose_unit, time_of_day, notes) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (schema_id, range_min, range_max, dose, dose_unit, time_of_day, notes),
+            )
+            return cur.lastrowid
+
+    def get_treatment_ranges(self, schema_id: int) -> list[dict]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM treatment_ranges WHERE schema_id = ? ORDER BY range_min",
+                (schema_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def update_treatment_range(self, range_id: int, **kwargs):
+        allowed = {"range_min", "range_max", "dose", "dose_unit", "time_of_day", "notes"}
+        fields = {k: v for k, v in kwargs.items() if k in allowed}
+        if not fields:
+            return
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        vals = list(fields.values()) + [range_id]
+        with self._conn() as conn:
+            conn.execute(f"UPDATE treatment_ranges SET {sets} WHERE id = ?", vals)
+
+    def delete_treatment_range(self, range_id: int):
+        with self._conn() as conn:
+            conn.execute("DELETE FROM treatment_ranges WHERE id = ?", (range_id,))
+
+    def lookup_treatment_dose(self, user_id: str, measurement_name: str,
+                              value: float) -> dict | None:
+        """Find the matching dose for a measurement value. Returns schema+range info or None."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT ts.id as schema_id, ts.name as schema_name, "
+                "ts.measurement_name, ts.measurement_unit, "
+                "ts.alert_low, ts.alert_high, ts.alert_contacts, "
+                "tr.dose, tr.dose_unit, tr.range_min, tr.range_max, tr.notes as range_notes "
+                "FROM treatment_schemas ts "
+                "JOIN treatment_ranges tr ON tr.schema_id = ts.id "
+                "WHERE ts.user_id = ? AND ts.active = 1 "
+                "AND LOWER(ts.measurement_name) LIKE ? "
+                "AND ? >= tr.range_min AND ? <= tr.range_max "
+                "LIMIT 1",
+                (user_id, f"%{measurement_name.lower()}%", value, value),
+            ).fetchone()
+            return dict(row) if row else None
+
+    # --- Measurement Log ---
+    def log_measurement(self, user_id: str, schema_id: int, value: float,
+                        dose_given: float | None = None, dose_unit: str = "",
+                        alert_sent: int = 0, notes: str = "") -> int:
+        with self._conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO measurement_log "
+                "(user_id, schema_id, measurement_value, dose_given, dose_unit, alert_sent, notes) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (user_id, schema_id, value, dose_given, dose_unit, alert_sent, notes),
+            )
+            log.info("Medicion registrada: %s=%s para %s", schema_id, value, user_id)
+            return cur.lastrowid
+
+    def get_measurement_log(self, user_id: str, schema_id: int | None = None,
+                            limit: int = 50) -> list[dict]:
+        with self._conn() as conn:
+            q = ("SELECT ml.*, ts.name as schema_name, ts.measurement_name, ts.measurement_unit "
+                 "FROM measurement_log ml "
+                 "JOIN treatment_schemas ts ON ml.schema_id = ts.id "
+                 "WHERE ml.user_id = ?")
+            params: list = [user_id]
+            if schema_id:
+                q += " AND ml.schema_id = ?"
+                params.append(schema_id)
+            q += " ORDER BY ml.measured_at DESC, ml.id DESC LIMIT ?"
+            params.append(limit)
+            return [dict(r) for r in conn.execute(q, params).fetchall()]
+
+    def count_consecutive_alerts(self, user_id: str, schema_id: int) -> int:
+        """Count how many of the most recent measurements were out of range (alert_sent=1)."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT alert_sent FROM measurement_log "
+                "WHERE user_id = ? AND schema_id = ? "
+                "ORDER BY measured_at DESC, id DESC LIMIT 5",
+                (user_id, schema_id),
+            ).fetchall()
+            count = 0
+            for row in rows:
+                if row["alert_sent"]:
+                    count += 1
+                else:
+                    break
+            return count

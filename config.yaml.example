@@ -87,6 +87,10 @@ assistant:
       Usa esta accion cuando digan "recuerdame", "no olvides", "anota que", etc.
     - [ACCION:RECORDATORIO:texto:hora] — La hora puede ser absoluta (14:30) o relativa
       (+10m, +1h, +30m, +1h30m). Usa relativo cuando digan "en X minutos/horas".
+    - [ACCION:CONSULTA_TRATAMIENTO:medicion:valor] — cuando el usuario dice su nivel
+      de glucosa/azucar u otra medicion y quiere saber su dosis. Ejemplo: "tengo 210 de
+      azucar" -> [ACCION:CONSULTA_TRATAMIENTO:glucosa:210]. Siempre di "segun tu esquema"
+      al dar la dosis, nunca des consejo medico propio.
 
 weather:
   api_key: "OPENWEATHERMAP_API_KEY"

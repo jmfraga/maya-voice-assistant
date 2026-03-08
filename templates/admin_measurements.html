@@ -1,0 +1,51 @@
+{% extends "admin_base.html" %}
+{% block title_extra %} - Mediciones{% endblock %}
+{% block content %}
+{% include "admin_user_header.html" %}
+
+<div class="card">
+    <h2>Historial de mediciones</h2>
+
+    {% if schemas %}
+    <div style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap">
+        <a href="/measurements/{{ user.id }}" class="btn btn-small"
+           style="background:{% if not selected_schema %}#4ecca3;color:#1a1a2e{% else %}#0f3460{% endif %}">Todas</a>
+        {% for s in schemas %}
+        <a href="/measurements/{{ user.id }}?schema_id={{ s.id }}" class="btn btn-small"
+           style="background:{% if selected_schema == s.id %}#4ecca3;color:#1a1a2e{% else %}#0f3460{% endif %}">{{ s.name }}</a>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if logs %}
+    <table>
+        <tr>
+            <th>Fecha/Hora</th>
+            <th>Esquema</th>
+            <th>Medicion</th>
+            <th>Dosis</th>
+            <th>Alerta</th>
+            <th>Notas</th>
+        </tr>
+        {% for l in logs %}
+        <tr{% if l.alert_sent %} style="background:#4a1a2a"{% endif %}>
+            <td>{{ l.measured_at }}</td>
+            <td>{{ l.schema_name }}</td>
+            <td>{{ l.measurement_value }} {{ l.measurement_unit }}</td>
+            <td>{{ l.dose_given if l.dose_given is not none else '-' }} {{ l.dose_unit or '' }}</td>
+            <td>
+                {% if l.alert_sent %}
+                <span style="color:#e94560">Si</span>
+                {% else %}
+                <span style="color:#4ecca3">No</span>
+                {% endif %}
+            </td>
+            <td>{{ l.notes or '' }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p style="color:#8899aa">No hay mediciones registradas.</p>
+    {% endif %}
+</div>
+{% endblock %}

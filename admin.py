@@ -286,6 +286,117 @@ def create_app(db=None, telegram_bot=None) -> Flask:
         flash("Solicitud rechazada", "success")
         return redirect(url_for("pending_contacts"))
 
+    # --- Treatment Schemas ---
+    @app.route("/treatments/<user_id>")
+    def treatments(user_id):
+        users = db.get_users()
+        user = next((u for u in users if u["id"] == user_id), None)
+        if not user:
+            flash("Usuario no encontrado", "error")
+            return redirect(url_for("index"))
+        schemas = db.get_treatment_schemas(user_id, active_only=False)
+        # Load ranges for each schema
+        for s in schemas:
+            s["ranges"] = db.get_treatment_ranges(s["id"])
+        contacts = db.get_contacts(user_id)
+        return render_template("admin_treatments.html", user=user, schemas=schemas,
+                               contacts=contacts, users=users)
+
+    @app.route("/treatments/<user_id>/add", methods=["POST"])
+    def add_treatment(user_id):
+        alert_low = request.form.get("alert_low", "").strip()
+        alert_high = request.form.get("alert_high", "").strip()
+        alert_contacts = ",".join(request.form.getlist("alert_contacts"))
+        db.add_treatment_schema(
+            user_id,
+            request.form["name"],
+            request.form["measurement_name"],
+            request.form.get("measurement_unit", ""),
+            alert_low=float(alert_low) if alert_low else None,
+            alert_high=float(alert_high) if alert_high else None,
+            alert_contacts=alert_contacts,
+            notes=request.form.get("notes", ""),
+        )
+        flash("Esquema de tratamiento creado", "success")
+        return redirect(url_for("treatments", user_id=user_id))
+
+    @app.route("/treatments/edit/<int:schema_id>", methods=["POST"])
+    def edit_treatment(schema_id):
+        user_id = request.form["user_id"]
+        alert_low = request.form.get("alert_low", "").strip()
+        alert_high = request.form.get("alert_high", "").strip()
+        alert_contacts = ",".join(request.form.getlist("alert_contacts"))
+        db.update_treatment_schema(
+            schema_id,
+            name=request.form["name"],
+            measurement_name=request.form["measurement_name"],
+            measurement_unit=request.form.get("measurement_unit", ""),
+            alert_low=float(alert_low) if alert_low else None,
+            alert_high=float(alert_high) if alert_high else None,
+            alert_contacts=alert_contacts,
+            notes=request.form.get("notes", ""),
+            active=1 if request.form.get("active") else 0,
+        )
+        flash("Esquema actualizado", "success")
+        return redirect(url_for("treatments", user_id=user_id))
+
+    @app.route("/treatments/delete/<int:schema_id>", methods=["POST"])
+    def delete_treatment(schema_id):
+        user_id = request.form["user_id"]
+        db.delete_treatment_schema(schema_id)
+        flash("Esquema eliminado", "success")
+        return redirect(url_for("treatments", user_id=user_id))
+
+    @app.route("/treatments/<int:schema_id>/add-range", methods=["POST"])
+    def add_treatment_range(schema_id):
+        user_id = request.form["user_id"]
+        db.add_treatment_range(
+            schema_id,
+            float(request.form["range_min"]),
+            float(request.form["range_max"]),
+            float(request.form["dose"]),
+            request.form.get("dose_unit", ""),
+            request.form.get("time_of_day", "any"),
+            request.form.get("notes", ""),
+        )
+        flash("Rango agregado", "success")
+        return redirect(url_for("treatments", user_id=user_id))
+
+    @app.route("/treatments/range/edit/<int:range_id>", methods=["POST"])
+    def edit_treatment_range(range_id):
+        user_id = request.form["user_id"]
+        db.update_treatment_range(
+            range_id,
+            range_min=float(request.form["range_min"]),
+            range_max=float(request.form["range_max"]),
+            dose=float(request.form["dose"]),
+            dose_unit=request.form.get("dose_unit", ""),
+            time_of_day=request.form.get("time_of_day", "any"),
+            notes=request.form.get("notes", ""),
+        )
+        flash("Rango actualizado", "success")
+        return redirect(url_for("treatments", user_id=user_id))
+
+    @app.route("/treatments/range/delete/<int:range_id>", methods=["POST"])
+    def delete_treatment_range(range_id):
+        user_id = request.form["user_id"]
+        db.delete_treatment_range(range_id)
+        flash("Rango eliminado", "success")
+        return redirect(url_for("treatments", user_id=user_id))
+
+    @app.route("/measurements/<user_id>")
+    def measurements(user_id):
+        users = db.get_users()
+        user = next((u for u in users if u["id"] == user_id), None)
+        if not user:
+            flash("Usuario no encontrado", "error")
+            return redirect(url_for("index"))
+        schema_id = request.args.get("schema_id", type=int)
+        logs = db.get_measurement_log(user_id, schema_id=schema_id)
+        schemas = db.get_treatment_schemas(user_id)
+        return render_template("admin_measurements.html", user=user, logs=logs,
+                               schemas=schemas, selected_schema=schema_id, users=users)
+
     # --- Settings ---
     def _load_config():
         config_path = os.path.join(BASE_DIR, "config.yaml")

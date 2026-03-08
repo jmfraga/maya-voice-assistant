@@ -35,6 +35,9 @@ def parse_actions(text: str) -> tuple[str, list[dict]]:
             elif action["type"] == "MEMORIA" and len(parts) >= 3:
                 action["category"] = parts[1].strip()
                 action["content"] = ":".join(parts[2:]).strip()
+            elif action["type"] == "CONSULTA_TRATAMIENTO" and len(parts) >= 3:
+                action["measurement"] = parts[1].strip()
+                action["value"] = parts[2].strip()
             actions.append(action)
 
     clean = ACTION_PATTERN.sub("", text).strip()
@@ -109,6 +112,20 @@ class LLM:
                 for msg in history:
                     role = "Usuario" if msg["role"] == "user" else self.assistant_name
                     parts.append(f"  {role}: {msg['content'][:300]}")
+
+            # Esquemas de tratamiento
+            schemas = db.get_treatment_schemas(user_id)
+            for schema in schemas:
+                ranges = db.get_treatment_ranges(schema["id"])
+                if ranges:
+                    unit = schema["measurement_unit"]
+                    parts.append(f"Esquema de tratamiento: {schema['name']} (segun {schema['measurement_name']})")
+                    range_parts = []
+                    for r in ranges:
+                        range_parts.append(f"{r['range_min']}-{r['range_max']}{unit} -> {r['dose']} {r['dose_unit']}")
+                    parts.append(f"  Rangos: {', '.join(range_parts)}")
+                    if schema["alert_low"] is not None or schema["alert_high"] is not None:
+                        parts.append(f"  Alerta si <{schema['alert_low']} o >{schema['alert_high']}")
 
             # Contactos
             contacts = db.get_contacts(user_id)

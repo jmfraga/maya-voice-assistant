@@ -152,6 +152,80 @@ def resolve_relative_time(time_str: str) -> str:
     return time_str
 
 
+def _handle_treatment_query(action: dict, user_id: str, db: Database,
+                            telegram: TelegramBot, results: list[str]):
+    """Handle CONSULTA_TRATAMIENTO action: lookup dose, log measurement, send alerts."""
+    measurement = action.get("measurement", "")
+    try:
+        value = float(action.get("value", "0"))
+    except (ValueError, TypeError):
+        results.append("No pude interpretar el valor de la medicion")
+        return
+
+    match = db.lookup_treatment_dose(user_id, measurement, value)
+    if not match:
+        results.append(f"No hay esquema configurado para {measurement}")
+        return
+
+    schema_id = match["schema_id"]
+    dose = match["dose"]
+    dose_unit = match["dose_unit"]
+    schema_name = match["schema_name"]
+    m_unit = match["measurement_unit"]
+
+    # Check if out of alert range
+    alert_low = match.get("alert_low")
+    alert_high = match.get("alert_high")
+    is_alert = False
+    if (alert_low is not None and value < alert_low) or \
+       (alert_high is not None and value > alert_high):
+        is_alert = True
+
+    # Log the measurement
+    db.log_measurement(user_id, schema_id, value,
+                       dose_given=dose, dose_unit=dose_unit,
+                       alert_sent=1 if is_alert else 0)
+
+    results.append(f"Segun tu esquema de {schema_name}, con {value}{m_unit} te tocan {dose} {dose_unit}")
+
+    # Send Telegram alerts if out of range
+    if is_alert and match.get("alert_contacts"):
+        user = db.get_user(user_id)
+        user_name = user["real_name"] if user else user_id
+
+        consecutive = db.count_consecutive_alerts(user_id, schema_id)
+
+        contact_ids = [c.strip() for c in match["alert_contacts"].split(",") if c.strip()]
+
+        if consecutive >= 2:
+            alert_msg = (
+                f"🔴 {user_name} registro {match['measurement_name']} fuera de rango "
+                f"por {consecutive}a vez consecutiva: {value} {m_unit}. "
+                f"Se le indicaron {dose} {dose_unit} de {schema_name}. "
+                f"Consideren comunicarse."
+            )
+        else:
+            alert_msg = (
+                f"⚠️ {user_name} registro {match['measurement_name']} de {value} {m_unit} "
+                f"(fuera del rango normal). "
+                f"Se le indicaron {dose} {dose_unit} segun su esquema de {schema_name}."
+            )
+
+        for contact_id_str in contact_ids:
+            try:
+                contact_id = int(contact_id_str)
+                # Look up contact to find telegram_chat_id
+                contacts = db.get_contacts(user_id)
+                contact = next((c for c in contacts if c["id"] == contact_id), None)
+                if contact and contact.get("telegram_chat_id"):
+                    telegram.send_to_chat_id(contact["telegram_chat_id"], alert_msg)
+                    log.info("Alerta enviada a %s (chat_id=%s)", contact["name"], contact["telegram_chat_id"])
+            except (ValueError, TypeError):
+                pass
+
+        results.append(f"Alerta enviada a {len(contact_ids)} contacto(s)")
+
+
 def execute_actions(actions: list[dict], user_id: str, db: Database,
                     telegram: TelegramBot) -> list[str]:
     """Execute parsed actions from LLM response. Returns list of result messages."""
@@ -196,6 +270,9 @@ def execute_actions(actions: list[dict], user_id: str, db: Database,
             elif atype == "MEMORIA":
                 db.save_memory(user_id, action["category"], action["content"])
                 results.append(f"Memoria guardada: {action['content']}")
+
+            elif atype == "CONSULTA_TRATAMIENTO":
+                _handle_treatment_query(action, user_id, db, telegram, results)
 
         except Exception as e:
             log.error("Error ejecutando accion %s: %s", atype, e)

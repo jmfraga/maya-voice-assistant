@@ -1,0 +1,221 @@
+{% extends "admin_base.html" %}
+{% block title_extra %} - Tratamientos{% endblock %}
+{% block content %}
+{% include "admin_user_header.html" %}
+
+{% for schema in schemas %}
+<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <h2>{{ schema.name }}
+            {% if schema.active %}
+            <span class="badge badge-active">Activo</span>
+            {% else %}
+            <span class="badge badge-inactive">Inactivo</span>
+            {% endif %}
+        </h2>
+        <form method="post" action="/treatments/delete/{{ schema.id }}"
+              onsubmit="return confirm('Eliminar esquema {{ schema.name }} y todos sus rangos?')">
+            <input type="hidden" name="user_id" value="{{ user.id }}">
+            <button type="submit" class="btn btn-danger btn-small">Eliminar esquema</button>
+        </form>
+    </div>
+
+    <!-- Edit schema -->
+    <form method="post" action="/treatments/edit/{{ schema.id }}">
+        <input type="hidden" name="user_id" value="{{ user.id }}">
+        <div class="form-row">
+            <div class="form-group">
+                <label>Nombre del tratamiento</label>
+                <input name="name" value="{{ schema.name }}" required>
+            </div>
+            <div class="form-group">
+                <label>Que se mide</label>
+                <input name="measurement_name" value="{{ schema.measurement_name }}" required>
+            </div>
+            <div class="form-group" style="max-width:100px">
+                <label>Unidad</label>
+                <input name="measurement_unit" value="{{ schema.measurement_unit or '' }}">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group" style="max-width:120px">
+                <label>Alerta si menor a</label>
+                <input name="alert_low" type="number" step="any" value="{{ schema.alert_low if schema.alert_low is not none else '' }}">
+            </div>
+            <div class="form-group" style="max-width:120px">
+                <label>Alerta si mayor a</label>
+                <input name="alert_high" type="number" step="any" value="{{ schema.alert_high if schema.alert_high is not none else '' }}">
+            </div>
+            <div class="form-group">
+                <label>Contactos para alertas</label>
+                <div style="display:flex;flex-wrap:wrap;gap:8px">
+                {% set selected_contacts = (schema.alert_contacts or '').split(',') %}
+                {% for c in contacts %}
+                    <label style="font-size:0.85em">
+                        <input type="checkbox" name="alert_contacts" value="{{ c.id }}"
+                               {% if c.id|string in selected_contacts %}checked{% endif %}>
+                        {{ c.name }}
+                    </label>
+                {% endfor %}
+                {% if not contacts %}
+                    <span style="color:#8899aa;font-size:0.85em">No hay contactos</span>
+                {% endif %}
+                </div>
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Notas</label>
+                <input name="notes" value="{{ schema.notes or '' }}">
+            </div>
+            <div class="form-group" style="max-width:100px">
+                <label>
+                    <input type="checkbox" name="active" {% if schema.active %}checked{% endif %}> Activo
+                </label>
+            </div>
+            <button type="submit" class="btn btn-primary btn-small">Guardar esquema</button>
+        </div>
+    </form>
+
+    <!-- Ranges table -->
+    <h3 style="color:#4ecca3;margin:16px 0 8px">Rangos de dosis</h3>
+    {% if schema.ranges %}
+    <table>
+        <tr>
+            <th>De ({{ schema.measurement_unit or 'valor' }})</th>
+            <th>A ({{ schema.measurement_unit or 'valor' }})</th>
+            <th>Dosis</th>
+            <th>Unidad dosis</th>
+            <th>Horario</th>
+            <th>Notas</th>
+            <th></th>
+        </tr>
+        {% for r in schema.ranges %}
+        <tr>
+            <form method="post" action="/treatments/range/edit/{{ r.id }}">
+                <input type="hidden" name="user_id" value="{{ user.id }}">
+                <td><input name="range_min" type="number" step="any" value="{{ r.range_min }}" style="width:80px" required></td>
+                <td><input name="range_max" type="number" step="any" value="{{ r.range_max }}" style="width:80px" required></td>
+                <td><input name="dose" type="number" step="any" value="{{ r.dose }}" style="width:70px" required></td>
+                <td><input name="dose_unit" value="{{ r.dose_unit or '' }}" style="width:90px"></td>
+                <td>
+                    <select name="time_of_day" style="width:100px">
+                        <option value="any" {% if r.time_of_day == 'any' %}selected{% endif %}>Cualquiera</option>
+                        <option value="mañana" {% if r.time_of_day == 'mañana' %}selected{% endif %}>Mañana</option>
+                        <option value="tarde" {% if r.time_of_day == 'tarde' %}selected{% endif %}>Tarde</option>
+                        <option value="noche" {% if r.time_of_day == 'noche' %}selected{% endif %}>Noche</option>
+                    </select>
+                </td>
+                <td><input name="notes" value="{{ r.notes or '' }}" style="width:100%"></td>
+                <td class="actions">
+                    <button type="submit" class="btn btn-primary btn-small">OK</button>
+            </form>
+            <form method="post" action="/treatments/range/delete/{{ r.id }}" style="display:inline"
+                  onsubmit="return confirm('Eliminar este rango?')">
+                <input type="hidden" name="user_id" value="{{ user.id }}">
+                <button type="submit" class="btn btn-danger btn-small">X</button>
+            </form>
+                </td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p style="color:#8899aa">No hay rangos configurados. Agrega rangos para que Maya pueda consultar dosis.</p>
+    {% endif %}
+
+    <!-- Add range -->
+    <form method="post" action="/treatments/{{ schema.id }}/add-range" style="margin-top:12px">
+        <input type="hidden" name="user_id" value="{{ user.id }}">
+        <div class="form-row">
+            <div class="form-group" style="max-width:100px">
+                <label>Desde</label>
+                <input name="range_min" type="number" step="any" required placeholder="0">
+            </div>
+            <div class="form-group" style="max-width:100px">
+                <label>Hasta</label>
+                <input name="range_max" type="number" step="any" required placeholder="120">
+            </div>
+            <div class="form-group" style="max-width:80px">
+                <label>Dosis</label>
+                <input name="dose" type="number" step="any" required placeholder="0">
+            </div>
+            <div class="form-group" style="max-width:100px">
+                <label>Unidad</label>
+                <input name="dose_unit" placeholder="unidades">
+            </div>
+            <div class="form-group" style="max-width:110px">
+                <label>Horario</label>
+                <select name="time_of_day">
+                    <option value="any">Cualquiera</option>
+                    <option value="mañana">Mañana</option>
+                    <option value="tarde">Tarde</option>
+                    <option value="noche">Noche</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Notas</label>
+                <input name="notes" placeholder="">
+            </div>
+            <button type="submit" class="btn btn-primary btn-small">+ Rango</button>
+        </div>
+    </form>
+</div>
+{% endfor %}
+
+{% if not schemas %}
+<div class="card">
+    <p style="color:#8899aa">No hay esquemas de tratamiento configurados.</p>
+</div>
+{% endif %}
+
+<div class="card">
+    <h2>Nuevo esquema de tratamiento</h2>
+    <form method="post" action="/treatments/{{ user.id }}/add">
+        <div class="form-row">
+            <div class="form-group">
+                <label>Nombre del tratamiento</label>
+                <input name="name" required placeholder="Insulina rapida">
+            </div>
+            <div class="form-group">
+                <label>Que se mide</label>
+                <input name="measurement_name" required placeholder="glucosa">
+            </div>
+            <div class="form-group" style="max-width:100px">
+                <label>Unidad</label>
+                <input name="measurement_unit" placeholder="mg/dL">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group" style="max-width:120px">
+                <label>Alerta si menor a</label>
+                <input name="alert_low" type="number" step="any" placeholder="70">
+            </div>
+            <div class="form-group" style="max-width:120px">
+                <label>Alerta si mayor a</label>
+                <input name="alert_high" type="number" step="any" placeholder="350">
+            </div>
+            <div class="form-group">
+                <label>Contactos para alertas</label>
+                <div style="display:flex;flex-wrap:wrap;gap:8px">
+                {% for c in contacts %}
+                    <label style="font-size:0.85em">
+                        <input type="checkbox" name="alert_contacts" value="{{ c.id }}">
+                        {{ c.name }}
+                    </label>
+                {% endfor %}
+                {% if not contacts %}
+                    <span style="color:#8899aa;font-size:0.85em">Agrega contactos primero</span>
+                {% endif %}
+                </div>
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Notas</label>
+                <input name="notes" placeholder="Esquema del Dr. Garcia, actualizado enero 2026">
+            </div>
+            <button type="submit" class="btn btn-primary">Crear esquema</button>
+        </div>
+    </form>
+</div>
+{% endblock %}
