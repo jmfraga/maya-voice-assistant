@@ -60,6 +60,16 @@ class TelegramBot:
                         return c["telegram_chat_id"]
         return None
 
+    def notify_admins(self, text: str):
+        """Send notification to all configured contacts (admin/family)."""
+        if not self._is_configured():
+            return
+        for name, chat_id in self.contacts.items():
+            try:
+                self.send_to_chat_id(int(chat_id), text)
+            except (ValueError, TypeError):
+                pass
+
     def send_to_chat_id(self, chat_id: int, text: str) -> bool:
         """Send message directly to a chat_id."""
         if not self._is_configured():

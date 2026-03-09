@@ -340,6 +340,17 @@ def create_app(db=None, telegram_bot=None) -> Flask:
         flash("Esquema actualizado", "success")
         return redirect(url_for("treatments", user_id=user_id))
 
+    @app.route("/treatments/toggle/<int:schema_id>", methods=["POST"])
+    def toggle_treatment(schema_id):
+        user_id = request.form["user_id"]
+        schema = db.get_treatment_schema(schema_id)
+        if schema:
+            new_active = 0 if schema["active"] else 1
+            db.update_treatment_schema(schema_id, active=new_active)
+            estado = "activado" if new_active else "desactivado"
+            flash(f"Esquema {estado}", "success")
+        return redirect(url_for("treatments", user_id=user_id))
+
     @app.route("/treatments/delete/<int:schema_id>", methods=["POST"])
     def delete_treatment(schema_id):
         user_id = request.form["user_id"]

@@ -13,11 +13,21 @@
             <span class="badge badge-inactive">Inactivo</span>
             {% endif %}
         </h2>
-        <form method="post" action="/treatments/delete/{{ schema.id }}"
-              onsubmit="return confirm('Eliminar esquema {{ schema.name }} y todos sus rangos?')">
-            <input type="hidden" name="user_id" value="{{ user.id }}">
-            <button type="submit" class="btn btn-danger btn-small">Eliminar esquema</button>
-        </form>
+        <div style="display:flex;gap:8px">
+            <form method="post" action="/treatments/toggle/{{ schema.id }}">
+                <input type="hidden" name="user_id" value="{{ user.id }}">
+                {% if schema.active %}
+                <button type="submit" class="btn btn-small" style="background:#e67e22">Desactivar</button>
+                {% else %}
+                <button type="submit" class="btn btn-small" style="background:#4ecca3">Activar</button>
+                {% endif %}
+            </form>
+            <form method="post" action="/treatments/delete/{{ schema.id }}"
+                  onsubmit="return confirm('Eliminar esquema {{ schema.name }} y todos sus rangos?')">
+                <input type="hidden" name="user_id" value="{{ user.id }}">
+                <button type="submit" class="btn btn-danger btn-small">Eliminar</button>
+            </form>
+        </div>
     </div>
 
     <!-- Edit schema -->

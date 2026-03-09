@@ -419,7 +419,7 @@ class Display:
             fg="white", bg=color,
         ).place(relx=0.5, y=10, anchor="n")
 
-        # Action buttons grid (2 columns x 3 rows)
+        # Action buttons grid (3 columns x 3 rows)
         actions = [
             ("Hablar con\nMaya", "\U0001F3A4", SUCCESS,
              lambda u=user_id: self._user_talk(u)),
@@ -431,16 +431,18 @@ class Display:
              lambda u=user_id: self._show_contacts(u)),
             ("Recordatorios", "\u23F0", "#1ABC9C",
              lambda u=user_id: self._show_reminders(u)),
+            ("Tratamiento", "\U0001F489", "#16A085",
+             lambda u=user_id: self._show_treatments(u)),
             ("Conoce a\nMaya", "\u2B50", ACCENT,
              lambda u=user_id: self._start_onboarding(u)),
         ]
 
         btn_w = 235
-        btn_h = 120
+        btn_h = 105
         start_x = 30
-        start_y = 70
+        start_y = 65
         gap_x = 25
-        gap_y = 15
+        gap_y = 12
 
         for i, (label, icon, btn_color, cmd) in enumerate(actions):
             col = i % 3
@@ -681,6 +683,129 @@ class Display:
         home_btn.place(relx=0.5, rely=0.5, anchor="center")
         home_btn.bind("<Button-1>", lambda e: self._go_home())
 
+    def _build_treatments_screen(self, user_id: str):
+        """Build treatment schemas screen for a user (read-only view)."""
+        screen_name = f"treatments_{user_id}"
+        if screen_name in self._screens:
+            self._screens[screen_name].destroy()
+
+        user = next((u for u in self._users if u["id"] == user_id), None)
+        if not user or not self.db:
+            return
+        color = user["color"]
+
+        f = tk.Frame(self._container, bg=BG)
+        f.place(x=0, y=0, width=W, height=H)
+        self._screens[screen_name] = f
+
+        # Header
+        header = tk.Frame(f, bg=color, height=55)
+        header.place(x=0, y=0, width=W, height=55)
+
+        back_btn = tk.Label(
+            header, text="\u2190 Menu", font=("Helvetica", 16, "bold"),
+            fg="white", bg=color, cursor="hand2",
+        )
+        back_btn.place(x=15, y=10, height=35)
+        back_btn.bind("<Button-1>",
+                      lambda e, u=user_id: self._open_user_menu(u))
+
+        tk.Label(
+            header, text=f"Tratamiento - {user['name']}",
+            font=("Helvetica", 20, "bold"), fg="white", bg=color,
+        ).place(relx=0.5, y=10, anchor="n")
+
+        # Scrollable area
+        canvas = tk.Canvas(f, bg=BG, highlightthickness=0)
+        canvas.place(x=0, y=60, width=W, height=H - 110)
+
+        inner = tk.Frame(canvas, bg=BG)
+        canvas.create_window((0, 0), window=inner, anchor="nw", width=W)
+
+        schemas = self.db.get_treatment_schemas(user_id, active_only=True)
+
+        if not schemas:
+            tk.Label(inner, text="No hay esquemas de tratamiento",
+                     font=("Helvetica", 18), fg=MUTED, bg=BG,
+                     ).pack(pady=40)
+        else:
+            for schema in schemas:
+                self._create_treatment_card(inner, schema, color)
+
+        # Bottom home
+        home_bar = tk.Frame(f, bg=CARD_BG, height=48)
+        home_bar.place(x=0, y=H - 48, width=W, height=48)
+        home_btn = tk.Label(
+            home_bar, text="\u2302 Inicio", font=("Helvetica", 16, "bold"),
+            fg=TEXT_SEC, bg=CARD_BG, cursor="hand2",
+        )
+        home_btn.place(relx=0.5, rely=0.5, anchor="center")
+        home_btn.bind("<Button-1>", lambda e: self._go_home())
+
+    def _create_treatment_card(self, parent, schema, color):
+        """Create a card showing a treatment schema with its dose ranges."""
+        ranges = self.db.get_treatment_ranges(schema["id"])
+        unit = schema.get("measurement_unit", "")
+        m_name = schema.get("measurement_name", "")
+
+        # Card frame
+        card = tk.Frame(parent, bg=CARD_BG)
+        card.pack(fill="x", padx=15, pady=8)
+
+        # Schema name header
+        name_lbl = tk.Label(
+            card, text=f"\U0001F489 {schema['name']}",
+            font=("Helvetica", 18, "bold"), fg=TEXT, bg=CARD_BG, anchor="w",
+        )
+        name_lbl.pack(fill="x", padx=15, pady=(10, 2))
+
+        # What is measured
+        tk.Label(
+            card, text=f"Medicion: {m_name} ({unit})" if unit else f"Medicion: {m_name}",
+            font=("Helvetica", 14), fg=TEXT_SEC, bg=CARD_BG, anchor="w",
+        ).pack(fill="x", padx=15, pady=(0, 5))
+
+        # Alert thresholds
+        alert_parts = []
+        if schema.get("alert_low") is not None:
+            alert_parts.append(f"Alerta si < {schema['alert_low']}{unit}")
+        if schema.get("alert_high") is not None:
+            alert_parts.append(f"Alerta si > {schema['alert_high']}{unit}")
+        if alert_parts:
+            tk.Label(
+                card, text="  |  ".join(alert_parts),
+                font=("Helvetica", 13), fg=DANGER, bg=CARD_BG, anchor="w",
+            ).pack(fill="x", padx=15, pady=(0, 5))
+
+        # Dose ranges
+        if ranges:
+            for r in ranges:
+                range_text = (
+                    f"  {r['range_min']}-{r['range_max']}{unit}  \u2192  "
+                    f"{r['dose']} {r.get('dose_unit', '')}"
+                )
+                if r.get("time_of_day") and r["time_of_day"] != "any":
+                    range_text += f"  ({r['time_of_day']})"
+                tk.Label(
+                    card, text=range_text, font=("Helvetica", 15),
+                    fg=TEXT, bg=CARD_BG, anchor="w",
+                ).pack(fill="x", padx=15, pady=1)
+        else:
+            tk.Label(
+                card, text="  Sin rangos configurados",
+                font=("Helvetica", 14), fg=MUTED, bg=CARD_BG, anchor="w",
+            ).pack(fill="x", padx=15, pady=2)
+
+        # Notes
+        if schema.get("notes"):
+            tk.Label(
+                card, text=schema["notes"],
+                font=("Helvetica", 12), fg=MUTED, bg=CARD_BG, anchor="w",
+            ).pack(fill="x", padx=15, pady=(5, 10))
+        else:
+            # Bottom padding
+            tk.Frame(card, bg=CARD_BG, height=10).pack()
+
     def _build_my_day_screen(self, user_id: str):
         screen_name = f"myday_{user_id}"
         if screen_name in self._screens:
@@ -826,12 +951,19 @@ class Display:
         self._wifi_status_label.place(x=20, y=y, width=600)
         y += 35
 
+        wifi_connect_btn = tk.Label(
+            f, text="Conectar WiFi", font=("Helvetica", 15, "bold"),
+            fg="white", bg="#3498DB", cursor="hand2", padx=15, pady=5,
+        )
+        wifi_connect_btn.place(x=W - 170, y=y - 5, width=150, height=40)
+        wifi_connect_btn.bind("<Button-1>", lambda e: self._wifi_connect_dialog())
+
         self._wifi_ip_label = tk.Label(
             f, text="", font=("Helvetica", 14),
             fg=MUTED, bg=BG, anchor="w",
         )
-        self._wifi_ip_label.place(x=20, y=y, width=600)
-        y += 50
+        self._wifi_ip_label.place(x=20, y=y + 30, width=600)
+        y += 60
 
         # --- System info ---
         tk.Frame(f, bg="#DDDDDD", height=2).place(x=20, y=y, width=W - 40)
@@ -958,6 +1090,187 @@ class Display:
 
         threading.Thread(target=_do_reconnect, daemon=True).start()
 
+    def _wifi_connect_dialog(self):
+        """Open WiFi scan & connect overlay."""
+        import subprocess as sp
+
+        overlay = tk.Frame(self._container, bg=BG)
+        overlay.place(x=0, y=0, width=W, height=H)
+        overlay.lift()
+
+        header = tk.Frame(overlay, bg="#34495E", height=55)
+        header.place(x=0, y=0, width=W, height=55)
+        tk.Label(header, text="Conectar WiFi",
+                 font=("Helvetica", 20, "bold"), fg="white", bg="#34495E",
+                 ).place(relx=0.5, y=10, anchor="n")
+
+        def _close_overlay():
+            overlay.destroy()
+            # Refresh config status
+            threading.Thread(target=self._fetch_config_status,
+                           daemon=True).start()
+
+        back_btn = tk.Label(header, text="\u2190 Volver",
+                            font=("Helvetica", 16, "bold"),
+                            fg="white", bg="#34495E", cursor="hand2")
+        back_btn.place(x=15, y=10, height=35)
+        back_btn.bind("<Button-1>", lambda e: _close_overlay())
+
+        # Network list
+        listframe = tk.Frame(overlay, bg=BG)
+        listframe.place(x=20, y=70, width=W - 40, height=280)
+
+        scrollbar = tk.Scrollbar(listframe)
+        scrollbar.pack(side="right", fill="y")
+
+        listbox = tk.Listbox(listframe, font=("Helvetica", 16),
+                             bg=CARD_BG, fg=TEXT, selectbackground=ACCENT,
+                             yscrollcommand=scrollbar.set, height=8)
+        listbox.pack(fill="both", expand=True)
+        scrollbar.config(command=listbox.yview)
+
+        status_lbl = tk.Label(overlay, text="Escaneando...",
+                              font=("Helvetica", 14), fg=TEXT_SEC, bg=BG)
+        status_lbl.place(x=20, y=360, width=W - 40, height=30)
+
+        # Buttons
+        btn_frame = tk.Frame(overlay, bg=BG)
+        btn_frame.place(x=20, y=400, width=W - 40, height=50)
+
+        connect_btn = tk.Label(btn_frame, text="Conectar",
+                               font=("Helvetica", 16, "bold"),
+                               fg="white", bg=SUCCESS, cursor="hand2",
+                               padx=20, pady=8)
+        connect_btn.pack(side="left", padx=10)
+
+        rescan_btn = tk.Label(btn_frame, text="Rescan",
+                              font=("Helvetica", 16, "bold"),
+                              fg="white", bg=WARNING, cursor="hand2",
+                              padx=20, pady=8)
+        rescan_btn.pack(side="left", padx=10)
+
+        close_btn = tk.Label(btn_frame, text="Cerrar",
+                             font=("Helvetica", 16, "bold"),
+                             fg="white", bg=DANGER, cursor="hand2",
+                             padx=20, pady=8)
+        close_btn.pack(side="right", padx=10)
+        close_btn.bind("<Button-1>", lambda e: _close_overlay())
+
+        def _scan():
+            status_lbl.config(text="Escaneando...")
+            listbox.delete(0, tk.END)
+
+            def _do_scan():
+                try:
+                    sp.run(["sudo", "-n", "nmcli", "device", "wifi", "rescan"],
+                           timeout=10, capture_output=True)
+                    import time
+                    time.sleep(2)
+                    r = sp.run(["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY",
+                                "device", "wifi", "list", "--rescan", "no"],
+                               capture_output=True, text=True, timeout=10)
+                    networks = []
+                    seen = set()
+                    for line in r.stdout.strip().split("\n"):
+                        if not line.strip():
+                            continue
+                        parts = line.split(":")
+                        ssid = parts[0] if parts else ""
+                        signal = parts[1] if len(parts) > 1 else "?"
+                        security = parts[2] if len(parts) > 2 else ""
+                        if ssid and ssid not in seen:
+                            seen.add(ssid)
+                            lock = " [protegida]" if security else ""
+                            networks.append(f"{ssid}  ({signal}%){lock}")
+                    self.queue.put({"type": "_wifi_scan_done",
+                                   "networks": networks})
+                except Exception as ex:
+                    self.queue.put({"type": "_wifi_scan_done",
+                                   "error": str(ex)})
+
+            threading.Thread(target=_do_scan, daemon=True).start()
+
+        def _connect():
+            sel = listbox.curselection()
+            if not sel:
+                status_lbl.config(text="Selecciona una red primero")
+                return
+            entry = listbox.get(sel[0])
+            ssid = entry.split("  (")[0]
+
+            if "[protegida]" in entry:
+                # Show password entry inline
+                _show_password_entry(ssid)
+            else:
+                _do_connect(["nmcli", "device", "wifi", "connect", ssid], ssid)
+
+        def _show_password_entry(ssid):
+            pwd_frame = tk.Frame(overlay, bg=CARD_BG)
+            pwd_frame.place(x=50, y=180, width=W - 100, height=120)
+
+            tk.Label(pwd_frame, text=f"Password para {ssid}:",
+                     font=("Helvetica", 16), fg=TEXT, bg=CARD_BG,
+                     ).pack(pady=(15, 5))
+            pwd_entry = tk.Entry(pwd_frame, font=("Helvetica", 16),
+                                 show="*", width=25)
+            pwd_entry.pack(pady=5)
+            pwd_entry.focus_set()
+
+            pwd_btn_frame = tk.Frame(pwd_frame, bg=CARD_BG)
+            pwd_btn_frame.pack(pady=5)
+
+            def _submit_pwd():
+                pwd = pwd_entry.get()
+                pwd_frame.destroy()
+                if pwd:
+                    _do_connect(["nmcli", "device", "wifi", "connect",
+                                 ssid, "password", pwd], ssid)
+
+            def _cancel_pwd():
+                pwd_frame.destroy()
+
+            ok_btn = tk.Label(pwd_btn_frame, text="OK",
+                              font=("Helvetica", 14, "bold"),
+                              fg="white", bg=SUCCESS, cursor="hand2",
+                              padx=15, pady=3)
+            ok_btn.pack(side="left", padx=10)
+            ok_btn.bind("<Button-1>", lambda e: _submit_pwd())
+            pwd_entry.bind("<Return>", lambda e: _submit_pwd())
+
+            cancel_btn = tk.Label(pwd_btn_frame, text="Cancelar",
+                                  font=("Helvetica", 14, "bold"),
+                                  fg="white", bg=DANGER, cursor="hand2",
+                                  padx=15, pady=3)
+            cancel_btn.pack(side="left", padx=10)
+            cancel_btn.bind("<Button-1>", lambda e: _cancel_pwd())
+
+        def _do_connect(cmd, ssid):
+            status_lbl.config(text=f"Conectando a {ssid}...")
+
+            def _run():
+                try:
+                    r = sp.run(cmd, capture_output=True, text=True, timeout=30)
+                    if r.returncode == 0:
+                        self.queue.put({"type": "_wifi_connect_result",
+                                       "text": f"Conectado a {ssid}!"})
+                    else:
+                        self.queue.put({"type": "_wifi_connect_result",
+                                       "text": f"Error: {r.stderr.strip()}"})
+                except Exception as ex:
+                    self.queue.put({"type": "_wifi_connect_result",
+                                   "text": f"Error: {ex}"})
+
+            threading.Thread(target=_run, daemon=True).start()
+
+        # Store refs for queue handler
+        self._wifi_dialog_listbox = listbox
+        self._wifi_dialog_status = status_lbl
+
+        connect_btn.bind("<Button-1>", lambda e: _connect())
+        rescan_btn.bind("<Button-1>", lambda e: _scan())
+
+        _scan()
+
     def _show_config_screen(self):
         self._build_config_screen()
         self._show_screen("config")
@@ -994,6 +1307,10 @@ class Display:
     def _show_my_day(self, user_id):
         self._build_my_day_screen(user_id)
         self._show_screen(f"myday_{user_id}")
+
+    def _show_treatments(self, user_id):
+        self._build_treatments_screen(user_id)
+        self._show_screen(f"treatments_{user_id}")
 
     def _start_onboarding(self, user_id):
         # Trigger onboarding via voice — will be expanded in Phase 3
@@ -1214,6 +1531,22 @@ class Display:
         elif kind == "_config_sys":
             if hasattr(self, "_sys_info_label"):
                 self._sys_info_label.config(text=msg["text"])
+
+        elif kind == "_wifi_scan_done":
+            if hasattr(self, "_wifi_dialog_listbox"):
+                lb = self._wifi_dialog_listbox
+                lb.delete(0, tk.END)
+                if "error" in msg:
+                    self._wifi_dialog_status.config(text=f"Error: {msg['error']}")
+                else:
+                    for net in msg["networks"]:
+                        lb.insert(tk.END, net)
+                    self._wifi_dialog_status.config(
+                        text=f"{len(msg['networks'])} redes encontradas")
+
+        elif kind == "_wifi_connect_result":
+            if hasattr(self, "_wifi_dialog_status"):
+                self._wifi_dialog_status.config(text=msg["text"])
 
         elif kind == "talk_btn":
             if hasattr(self, "_conv_talk_btn"):

@@ -85,6 +85,10 @@ assistant:
     - [ACCION:MEMORIA:categoria:contenido] — guardar algo que el usuario quiere recordar.
       Categorias: preferencia, pendiente, salud, familia, compra, informacion.
       Usa esta accion cuando digan "recuerdame", "no olvides", "anota que", etc.
+    IMPORTANTE sobre memorias de salud: Si el usuario dice algo que contradice informacion
+    de salud que ya tienes en contexto (medicamentos, enfermedades, alergias, condiciones),
+    PRIMERO confirma con el usuario: "Antes me dijiste que [X], ahora me dices [Y]. Quieres
+    que actualice esa informacion?" Solo emite la accion MEMORIA si confirman.
     - [ACCION:RECORDATORIO:texto:hora] — La hora puede ser absoluta (14:30) o relativa
       (+10m, +1h, +30m, +1h30m). Usa relativo cuando digan "en X minutos/horas".
     - [ACCION:CONSULTA_TRATAMIENTO:medicion:valor] — cuando el usuario dice su nivel

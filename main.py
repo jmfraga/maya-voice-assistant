@@ -227,7 +227,7 @@ def _handle_treatment_query(action: dict, user_id: str, db: Database,
 
 
 def execute_actions(actions: list[dict], user_id: str, db: Database,
-                    telegram: TelegramBot) -> list[str]:
+                    telegram: TelegramBot, llm=None) -> list[str]:
     """Execute parsed actions from LLM response. Returns list of result messages."""
     results = []
     for action in actions:
@@ -268,8 +268,16 @@ def execute_actions(actions: list[dict], user_id: str, db: Database,
                     results.append(f"No encontré el medicamento '{action['name']}'")
 
             elif atype == "MEMORIA":
-                db.save_memory(user_id, action["category"], action["content"])
-                results.append(f"Memoria guardada: {action['content']}")
+                cat = action["category"]
+                content = action["content"]
+                if llm:
+                    _smart_save_memory(
+                        llm, db, user_id, cat, content,
+                        telegram=telegram,
+                    )
+                else:
+                    db.save_memory(user_id, cat, content)
+                results.append(f"Memoria guardada: {content}")
 
             elif atype == "CONSULTA_TRATAMIENTO":
                 _handle_treatment_query(action, user_id, db, telegram, results)
@@ -366,10 +374,16 @@ def _extract_with_llm(llm, question: str, raw_answer: str) -> str:
     return result if result and result != "TODO" else raw_answer
 
 
-def _smart_save_memory(llm, db, user_id: str, category: str, new_content: str):
+HEALTH_CATEGORIES = {"salud", "medicamento", "enfermedad", "alergia", "condicion",
+                     "tratamiento", "diagnostico"}
+
+
+def _smart_save_memory(llm, db, user_id: str, category: str, new_content: str,
+                       telegram=None):
     """Save memory with LLM-powered dedup and contradiction handling.
 
-    On contradiction: asks LLM to merge both into the most accurate version.
+    On contradiction in health categories: notifies admin via Telegram.
+    On other contradictions: merges keeping newer as truth.
     """
     existing = db.get_memories(user_id, category=category, limit=50)
 
@@ -411,12 +425,28 @@ def _smart_save_memory(llm, db, user_id: str, category: str, new_content: str):
         db.save_memory(user_id, category, new_content)
         return
 
+    is_health = category.lower() in HEALTH_CATEGORIES
+
     if result.startswith("CONTRADICE:"):
         try:
             old_id = int(result.split(":")[1].strip())
             old_mem = next((m for m in existing if m["id"] == old_id), None)
             if old_mem:
-                # Ask LLM to resolve: keep newer as truth, merge if possible
+                # Health-critical: notify admin, save new but keep old marked
+                if is_health and telegram:
+                    user = db.get_user(user_id)
+                    u_name = user["name"] if user else user_id
+                    alert_msg = (
+                        f"\u26A0\uFE0F Contradiccion de salud ({u_name}):\n"
+                        f"Anterior: {old_mem['content']}\n"
+                        f"Nuevo: {new_content}\n\n"
+                        "Se guardo la nueva version. Revisa en admin > Memorias."
+                    )
+                    telegram.notify_admins(alert_msg)
+                    log.warning("Contradiccion de salud para %s: '%s' vs '%s'",
+                                user_id, old_mem['content'], new_content)
+
+                # Merge via LLM (newer has priority)
                 merge_prompt = (
                     f"Memoria anterior: '{old_mem['content']}'\n"
                     f"Memoria nueva (mas reciente): '{new_content}'\n\n"
@@ -790,7 +820,7 @@ def main():
 
             # h. Execute actions
             if actions:
-                action_results = execute_actions(actions, user_id or "unknown", db, telegram)
+                action_results = execute_actions(actions, user_id or "unknown", db, telegram, llm=llm)
                 for r in action_results:
                     log.info("Accion: %s", r)
 
@@ -849,7 +879,7 @@ def main():
                 fw_response, fw_actions = llm.chat(fw_text, user_name, db, user_id)
 
                 if fw_actions:
-                    fw_results = execute_actions(fw_actions, user_id or "unknown", db, telegram)
+                    fw_results = execute_actions(fw_actions, user_id or "unknown", db, telegram, llm=llm)
                     for r in fw_results:
                         log.info("Accion follow-up ronda %d: %s", followup_round, r)
 
