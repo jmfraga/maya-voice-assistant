@@ -116,6 +116,14 @@ CREATE TABLE IF NOT EXISTS measurement_log (
     notes TEXT,
     measured_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
+
+CREATE TABLE IF NOT EXISTS admin_users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'familiar',
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
 """
 
 
@@ -610,3 +618,38 @@ class Database:
                 else:
                     break
             return count
+
+    # --- Admin Users ---
+    def get_admin_user(self, username: str) -> dict | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM admin_users WHERE username = ?", (username,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_admin_users(self) -> list[dict]:
+        with self._conn() as conn:
+            return [dict(r) for r in conn.execute(
+                "SELECT id, username, role, created_at FROM admin_users ORDER BY id",
+            ).fetchall()]
+
+    def add_admin_user(self, username: str, password_hash: str, role: str = "familiar"):
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO admin_users (username, password_hash, role) VALUES (?, ?, ?)",
+                (username, password_hash, role),
+            )
+            log.info("Admin user creado: %s (%s)", username, role)
+
+    def update_admin_user(self, user_id: int, **kwargs):
+        with self._conn() as conn:
+            for key, val in kwargs.items():
+                if key in ("username", "password_hash", "role"):
+                    conn.execute(
+                        f"UPDATE admin_users SET {key} = ? WHERE id = ?",
+                        (val, user_id),
+                    )
+
+    def delete_admin_user(self, user_id: int):
+        with self._conn() as conn:
+            conn.execute("DELETE FROM admin_users WHERE id = ?", (user_id,))

@@ -242,7 +242,21 @@ class Display:
             bottom, text="Di 'Oye Maya' o toca tu nombre",
             font=("Helvetica", self.fs(13)), fg=MUTED, bg=CARD_BG, anchor="e",
         )
-        self._mic_hint.place(x=self.x(350), y=self.y(8), width=self.x(280), height=self.y(32))
+        self._mic_hint.place(x=self.x(380), y=self.y(8), width=self.x(280), height=self.y(32))
+
+        # Admin URL (local network)
+        try:
+            import subprocess as _sp
+            _lip = _sp.run(["hostname", "-I"], capture_output=True, text=True, timeout=3)
+            _local_ip = _lip.stdout.strip().split()[0] if _lip.stdout.strip() else None
+        except Exception:
+            _local_ip = None
+        if _local_ip:
+            self._admin_url_label = tk.Label(
+                f, text=f"Admin: http://{_local_ip}:8085",
+                font=("Helvetica", self.fs(11)), fg=MUTED, bg=BG, anchor="w",
+            )
+            self._admin_url_label.place(x=self.x(25), y=self.y(185), width=W - self.x(30), height=self.y(15))
 
         # Config + Exit buttons (hidden in production mode)
         if not self.config.get("production_mode", False):

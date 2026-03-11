@@ -67,11 +67,17 @@
         <span class="nav-brand">Maya Admin</span>
         <a href="/" {% if request.path == '/' %}class="active"{% endif %}>Inicio</a>
         <a href="/pending" {% if request.path == '/pending' %}class="active"{% endif %}>Contactos</a>
+        {% if current_role == 'admin' %}
         <a href="/settings" {% if request.path == '/settings' %}class="active"{% endif %}>Configuracion</a>
+        <a href="/admin-users" {% if request.path == '/admin-users' %}class="active"{% endif %}>Usuarios Admin</a>
+        {% endif %}
         {% if users is defined %}
         {% for u in users %}
         <a href="/medications/{{ u.id }}">{{ u.real_name }}</a>
         {% endfor %}
+        {% endif %}
+        {% if current_user %}
+        <a href="/logout" style="margin-left:auto;color:#e94560;">Salir ({{ current_user }})</a>
         {% endif %}
     </nav>
     <div class="container">

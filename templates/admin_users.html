@@ -1,0 +1,58 @@
+{% extends "admin_base.html" %}
+{% block title_extra %} — Usuarios Admin{% endblock %}
+{% block content %}
+<div class="card">
+    <h2>Usuarios del Panel Admin</h2>
+    <table>
+        <thead>
+            <tr><th>Usuario</th><th>Rol</th><th>Creado</th><th>Acciones</th></tr>
+        </thead>
+        <tbody>
+        {% for u in admin_list %}
+        <tr>
+            <td>{{ u.username }}</td>
+            <td><span class="badge {% if u.role == 'admin' %}badge-active{% else %}badge-inactive{% endif %}">{{ u.role }}</span></td>
+            <td>{{ u.created_at[:16] if u.created_at else '' }}</td>
+            <td class="actions">
+                <form method="POST" action="/admin-users/edit/{{ u.id }}" style="display:flex;gap:4px;align-items:center;">
+                    <select name="role" style="padding:4px;">
+                        <option value="admin" {% if u.role == 'admin' %}selected{% endif %}>admin</option>
+                        <option value="familiar" {% if u.role == 'familiar' %}selected{% endif %}>familiar</option>
+                    </select>
+                    <input type="password" name="password" placeholder="Nueva contrasena" style="width:140px;padding:4px;">
+                    <button type="submit" class="btn btn-primary btn-small">Guardar</button>
+                </form>
+                <form method="POST" action="/admin-users/delete/{{ u.id }}" onsubmit="return confirm('Eliminar usuario {{ u.username }}?')">
+                    <button type="submit" class="btn btn-danger btn-small">X</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="card">
+    <h2>Agregar Usuario</h2>
+    <form method="POST" action="/admin-users/add">
+        <div class="form-row">
+            <div class="form-group">
+                <label>Usuario</label>
+                <input type="text" name="username" required>
+            </div>
+            <div class="form-group">
+                <label>Contrasena</label>
+                <input type="password" name="password" required>
+            </div>
+            <div class="form-group">
+                <label>Rol</label>
+                <select name="role">
+                    <option value="familiar">familiar</option>
+                    <option value="admin">admin</option>
+                </select>
+            </div>
+            <button type="submit" class="btn btn-primary">Agregar</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

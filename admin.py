@@ -7,8 +7,10 @@ Or import and call start_admin() from main.py
 
 import os
 import logging
+import functools
 import yaml
-from flask import Flask, render_template, request, redirect, url_for, flash
+from flask import Flask, render_template, request, redirect, url_for, flash, session
+from werkzeug.security import generate_password_hash, check_password_hash
 
 log = logging.getLogger("maya.admin")
 
@@ -32,6 +34,74 @@ def create_app(db=None, telegram_bot=None) -> Flask:
     if db is None:
         from db import Database
         db = Database(os.path.join(BASE_DIR, "data", "assistant.db"))
+
+    # --- Auth helpers ---
+    def login_required(f):
+        @functools.wraps(f)
+        def decorated(*args, **kwargs):
+            if not session.get("admin_user"):
+                return redirect(url_for("login"))
+            return f(*args, **kwargs)
+        return decorated
+
+    def admin_only(f):
+        @functools.wraps(f)
+        def decorated(*args, **kwargs):
+            if not session.get("admin_user"):
+                return redirect(url_for("login"))
+            if session.get("admin_role") != "admin":
+                flash("Acceso restringido a administradores", "error")
+                return redirect(url_for("index"))
+            return f(*args, **kwargs)
+        return decorated
+
+    @app.before_request
+    def require_login():
+        public = ("login", "static", "user_photo")
+        if request.endpoint and request.endpoint in public:
+            return
+        if not session.get("admin_user"):
+            return redirect(url_for("login"))
+
+    @app.context_processor
+    def inject_auth():
+        return {
+            "current_user": session.get("admin_user"),
+            "current_role": session.get("admin_role"),
+        }
+
+    # --- Login/Logout ---
+    @app.route("/login", methods=["GET", "POST"])
+    def login():
+        # If no admin users exist, show setup form
+        admin_users = db.get_admin_users()
+        if not admin_users:
+            if request.method == "POST":
+                username = request.form.get("username", "").strip()
+                password = request.form.get("password", "").strip()
+                if username and password:
+                    db.add_admin_user(username, generate_password_hash(password), "admin")
+                    session["admin_user"] = username
+                    session["admin_role"] = "admin"
+                    flash(f"Cuenta de administrador '{username}' creada", "success")
+                    return redirect(url_for("index"))
+            return render_template("admin_login.html", setup=True)
+
+        if request.method == "POST":
+            username = request.form.get("username", "").strip()
+            password = request.form.get("password", "").strip()
+            user = db.get_admin_user(username)
+            if user and check_password_hash(user["password_hash"], password):
+                session["admin_user"] = username
+                session["admin_role"] = user["role"]
+                return redirect(url_for("index"))
+            flash("Usuario o contraseña incorrectos", "error")
+        return render_template("admin_login.html", setup=False)
+
+    @app.route("/logout")
+    def logout():
+        session.clear()
+        return redirect(url_for("login"))
 
     # --- Dashboard ---
     @app.route("/")
@@ -428,6 +498,7 @@ def create_app(db=None, telegram_bot=None) -> Flask:
         return value[:4] + "*" * (len(value) - 8) + value[-4:]
 
     @app.route("/settings")
+    @admin_only
     def settings():
         cfg = _load_config()
         users = db.get_users()
@@ -489,6 +560,7 @@ def create_app(db=None, telegram_bot=None) -> Flask:
         return redirect(url_for("index"))
 
     @app.route("/settings/upload-ppn", methods=["POST"])
+    @admin_only
     def upload_ppn():
         f = request.files.get("ppn_file")
         if not f or not f.filename.endswith(".ppn"):
@@ -508,6 +580,7 @@ def create_app(db=None, telegram_bot=None) -> Flask:
         return redirect(url_for("settings"))
 
     @app.route("/settings/save", methods=["POST"])
+    @admin_only
     def save_settings():
         cfg = _load_config()
 
@@ -634,6 +707,48 @@ def create_app(db=None, telegram_bot=None) -> Flask:
         _save_config(cfg)
         flash("Configuracion guardada. Reinicia Maya para aplicar cambios.", "success")
         return redirect(url_for("settings"))
+
+    # --- Admin Users Management ---
+    @app.route("/admin-users")
+    @admin_only
+    def admin_users_page():
+        admin_list = db.get_admin_users()
+        users = db.get_users()
+        return render_template("admin_users.html", admin_list=admin_list, users=users)
+
+    @app.route("/admin-users/add", methods=["POST"])
+    @admin_only
+    def add_admin_user():
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "").strip()
+        role = request.form.get("role", "familiar")
+        if not username or not password:
+            flash("Usuario y contraseña requeridos", "error")
+        elif db.get_admin_user(username):
+            flash(f"El usuario '{username}' ya existe", "error")
+        else:
+            db.add_admin_user(username, generate_password_hash(password), role)
+            flash(f"Usuario '{username}' ({role}) creado", "success")
+        return redirect(url_for("admin_users_page"))
+
+    @app.route("/admin-users/edit/<int:uid>", methods=["POST"])
+    @admin_only
+    def edit_admin_user(uid):
+        role = request.form.get("role", "familiar")
+        password = request.form.get("password", "").strip()
+        updates = {"role": role}
+        if password:
+            updates["password_hash"] = generate_password_hash(password)
+        db.update_admin_user(uid, **updates)
+        flash("Usuario actualizado", "success")
+        return redirect(url_for("admin_users_page"))
+
+    @app.route("/admin-users/delete/<int:uid>", methods=["POST"])
+    @admin_only
+    def delete_admin_user(uid):
+        db.delete_admin_user(uid)
+        flash("Usuario eliminado", "success")
+        return redirect(url_for("admin_users_page"))
 
     return app
 
