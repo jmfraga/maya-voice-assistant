@@ -1229,43 +1229,127 @@ class Display:
                 _do_connect(["nmcli", "device", "wifi", "connect", ssid], ssid)
 
         def _show_password_entry(ssid):
-            pwd_frame = tk.Frame(overlay, bg=CARD_BG)
-            pwd_frame.place(x=self.x(50), y=self.y(180), width=W - self.x(100), height=self.y(120))
+            kbd_frame = tk.Frame(overlay, bg=BG)
+            kbd_frame.place(x=0, y=0, width=W, height=H)
+            kbd_frame.lift()
 
-            tk.Label(pwd_frame, text=f"Password para {ssid}:",
-                     font=("Helvetica", self.fs(16)), fg=TEXT, bg=CARD_BG,
-                     ).pack(pady=(self.y(15), self.y(5)))
-            pwd_entry = tk.Entry(pwd_frame, font=("Helvetica", self.fs(16)),
-                                 show="*", width=25)
-            pwd_entry.pack(pady=self.y(5))
-            pwd_entry.focus_set()
+            shift_on = [False]
+            show_pwd = [False]
 
-            pwd_btn_frame = tk.Frame(pwd_frame, bg=CARD_BG)
-            pwd_btn_frame.pack(pady=self.y(5))
+            # --- Top bar: label + entry + show/hide ---
+            top = tk.Frame(kbd_frame, bg=CARD_BG)
+            top.place(x=0, y=0, width=W, height=self.y(70))
+
+            tk.Label(top, text=f"{ssid}:",
+                     font=("Helvetica", self.fs(13)), fg=TEXT, bg=CARD_BG,
+                     ).place(x=self.x(5), y=self.y(5))
+
+            pwd_entry = tk.Entry(top, font=("Helvetica", self.fs(16)),
+                                 show="*", width=20)
+            pwd_entry.place(x=self.x(5), y=self.y(32), width=W - self.x(80), height=self.y(32))
+
+            def _toggle_show():
+                show_pwd[0] = not show_pwd[0]
+                pwd_entry.config(show="" if show_pwd[0] else "*")
+                eye_btn.config(text="***" if show_pwd[0] else "Aa")
+
+            eye_btn = tk.Label(top, text="Aa",
+                               font=("Helvetica", self.fs(12), "bold"),
+                               fg="white", bg="#7F8C8D", cursor="hand2")
+            eye_btn.place(x=W - self.x(70), y=self.y(32), width=self.x(60), height=self.y(32))
+            eye_btn.bind("<Button-1>", lambda e: _toggle_show())
+
+            # --- Keyboard rows ---
+            rows_lower = [
+                list("1234567890"),
+                list("qwertyuiop"),
+                list("asdfghjkl"),
+                list("zxcvbnm"),
+            ]
+            rows_upper = [
+                list("!@#$%^&*()"),
+                list("QWERTYUIOP"),
+                list("ASDFGHJKL"),
+                list("ZXCVBNM"),
+            ]
+
+            key_labels = []
+            kb_area = tk.Frame(kbd_frame, bg=BG)
+            kb_area.place(x=0, y=self.y(72), width=W, height=H - self.y(72))
+
+            row_height = (H - self.y(72)) // 5
+            key_font = ("Helvetica", self.fs(13), "bold")
+            key_bg = "#ECF0F1"
+
+            def _press(ch):
+                pwd_entry.insert(tk.END, ch)
+
+            def _backspace():
+                pwd_entry.delete(len(pwd_entry.get()) - 1, tk.END)
+
+            def _toggle_shift():
+                shift_on[0] = not shift_on[0]
+                rows = rows_upper if shift_on[0] else rows_lower
+                idx = 0
+                for r, row in enumerate(rows):
+                    for c, ch in enumerate(row):
+                        if idx < len(key_labels):
+                            key_labels[idx].config(text=ch)
+                        idx += 1
+                shift_btn.config(bg=ACCENT if shift_on[0] else key_bg,
+                                 fg="white" if shift_on[0] else TEXT)
 
             def _submit_pwd():
                 pwd = pwd_entry.get()
-                pwd_frame.destroy()
+                kbd_frame.destroy()
                 if pwd:
                     _do_connect(["nmcli", "device", "wifi", "connect",
                                  ssid, "password", pwd], ssid)
 
             def _cancel_pwd():
-                pwd_frame.destroy()
+                kbd_frame.destroy()
 
-            ok_btn = tk.Label(pwd_btn_frame, text="OK",
-                              font=("Helvetica", self.fs(14), "bold"),
-                              fg="white", bg=SUCCESS, cursor="hand2",
-                              padx=self.x(15), pady=self.y(3))
-            ok_btn.pack(side="left", padx=self.x(10))
+            for r, row in enumerate(rows_lower):
+                num_keys = len(row)
+                key_w = (W - self.x(10)) // 10
+                x_offset = (W - num_keys * key_w) // 2
+                for c, ch in enumerate(row):
+                    btn = tk.Label(kb_area, text=ch, font=key_font,
+                                   fg=TEXT, bg=key_bg, relief="raised",
+                                   cursor="hand2")
+                    btn.place(x=x_offset + c * key_w, y=r * row_height,
+                              width=key_w - 2, height=row_height - 2)
+                    btn.bind("<Button-1>",
+                             lambda e, b=btn: _press(b.cget("text")))
+                    key_labels.append(btn)
+
+            # Bottom row: shift, space, backspace, OK, cancel
+            bot_y = 4 * row_height
+            btn_w = W // 6
+
+            shift_btn = tk.Label(kb_area, text="^", font=key_font,
+                                 fg=TEXT, bg=key_bg, relief="raised", cursor="hand2")
+            shift_btn.place(x=2, y=bot_y, width=btn_w - 2, height=row_height - 2)
+            shift_btn.bind("<Button-1>", lambda e: _toggle_shift())
+
+            space_btn = tk.Label(kb_area, text="___", font=key_font,
+                                 fg=TEXT, bg=key_bg, relief="raised", cursor="hand2")
+            space_btn.place(x=btn_w, y=bot_y, width=btn_w * 2 - 2, height=row_height - 2)
+            space_btn.bind("<Button-1>", lambda e: _press(" "))
+
+            bksp_btn = tk.Label(kb_area, text="<", font=key_font,
+                                fg=TEXT, bg=key_bg, relief="raised", cursor="hand2")
+            bksp_btn.place(x=btn_w * 3, y=bot_y, width=btn_w - 2, height=row_height - 2)
+            bksp_btn.bind("<Button-1>", lambda e: _backspace())
+
+            ok_btn = tk.Label(kb_area, text="OK", font=key_font,
+                              fg="white", bg=SUCCESS, relief="raised", cursor="hand2")
+            ok_btn.place(x=btn_w * 4, y=bot_y, width=btn_w - 2, height=row_height - 2)
             ok_btn.bind("<Button-1>", lambda e: _submit_pwd())
-            pwd_entry.bind("<Return>", lambda e: _submit_pwd())
 
-            cancel_btn = tk.Label(pwd_btn_frame, text="Cancelar",
-                                  font=("Helvetica", self.fs(14), "bold"),
-                                  fg="white", bg=DANGER, cursor="hand2",
-                                  padx=self.x(15), pady=self.y(3))
-            cancel_btn.pack(side="left", padx=self.x(10))
+            cancel_btn = tk.Label(kb_area, text="X", font=key_font,
+                                  fg="white", bg=DANGER, relief="raised", cursor="hand2")
+            cancel_btn.place(x=btn_w * 5, y=bot_y, width=btn_w - 2, height=row_height - 2)
             cancel_btn.bind("<Button-1>", lambda e: _cancel_pwd())
 
         def _do_connect(cmd, ssid):
