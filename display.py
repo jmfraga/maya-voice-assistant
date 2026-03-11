@@ -32,7 +32,8 @@ NIGHT_TEXT = "#AAAAAA"
 
 USER_COLORS = ["#2980B9", "#27AE60", "#8E44AD", "#D35400"]
 
-W, H = 800, 480
+REF_W, REF_H = 800, 480  # Reference resolution
+W, H = 800, 480  # Actual resolution (updated at runtime)
 AUTO_RETURN_MS = 120_000  # 2 minutes
 NIGHT_START = 22  # 10pm
 NIGHT_END = 7     # 7am
@@ -95,16 +96,36 @@ class Display:
                 "color": USER_COLORS[i % len(USER_COLORS)],
             })
 
+    def x(self, val):
+        """Scale X coordinate."""
+        return int(val * self._sx) if hasattr(self, '_sx') else val
+
+    def y(self, val):
+        """Scale Y coordinate."""
+        return int(val * self._sy) if hasattr(self, '_sy') else val
+
+    def fs(self, val):
+        """Scale font size."""
+        return max(8, int(val * self._sf)) if hasattr(self, '_sf') else val
+
     def start(self):
         self._running = True
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
     def _run(self):
+        global W, H
         self.root = tk.Tk()
         self.root.title("Maya")
         self.root.configure(bg=BG)
-        # Force window to DSI screen size and position
+        # Detect actual screen resolution
+        W = self.root.winfo_screenwidth()
+        H = self.root.winfo_screenheight()
+        log.info("Pantalla detectada: %dx%d", W, H)
+        # Scale factor for fonts and sizes
+        self._sx = W / REF_W
+        self._sy = H / REF_H
+        self._sf = min(self._sx, self._sy)  # uniform scale factor
         self.root.geometry(f"{W}x{H}+0+0")
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
@@ -137,106 +158,106 @@ class Display:
         self._screens["main"] = f
 
         # --- Top section: clock left, info right ---
-        top = tk.Frame(f, bg=CARD_BG, height=130)
-        top.place(x=0, y=0, width=W, height=130)
+        top = tk.Frame(f, bg=CARD_BG, height=self.y(130))
+        top.place(x=0, y=0, width=W, height=self.y(130))
 
         # Clock (left side, big)
         self._clock_label = tk.Label(
-            top, text="", font=("Helvetica", 72, "bold"),
+            top, text="", font=("Helvetica", self.fs(72), "bold"),
             fg=TEXT, bg=CARD_BG, anchor="w",
         )
-        self._clock_label.place(x=20, y=10, height=90)
+        self._clock_label.place(x=self.x(20), y=self.y(10), height=self.y(90))
 
         # Right side: greeting, date, weather stacked
         self._greeting_label = tk.Label(
-            top, text=_greeting(), font=("Helvetica", 20, "bold"),
+            top, text=_greeting(), font=("Helvetica", self.fs(20), "bold"),
             fg=TEXT, bg=CARD_BG, anchor="e",
         )
-        self._greeting_label.place(x=W - 20, y=10, anchor="ne")
+        self._greeting_label.place(x=W - self.x(20), y=self.y(10), anchor="ne")
 
         self._date_label = tk.Label(
-            top, text="", font=("Helvetica", 17),
+            top, text="", font=("Helvetica", self.fs(17)),
             fg=TEXT_SEC, bg=CARD_BG, anchor="e",
         )
-        self._date_label.place(x=W - 20, y=45, anchor="ne")
+        self._date_label.place(x=W - self.x(20), y=self.y(45), anchor="ne")
 
         self._weather_label = tk.Label(
-            top, text="", font=("Helvetica", 18),
+            top, text="", font=("Helvetica", self.fs(18)),
             fg=TEXT_SEC, bg=CARD_BG, anchor="e",
         )
-        self._weather_label.place(x=W - 20, y=80, anchor="ne")
+        self._weather_label.place(x=W - self.x(20), y=self.y(80), anchor="ne")
 
         # --- Alert bar ---
-        alert_frame = tk.Frame(f, bg=BG, height=50)
-        alert_frame.place(x=0, y=135, width=W, height=50)
+        alert_frame = tk.Frame(f, bg=BG, height=self.y(50))
+        alert_frame.place(x=0, y=self.y(135), width=W, height=self.y(50))
 
         self._alert_left = tk.Label(
-            alert_frame, text="", font=("Helvetica", 15),
+            alert_frame, text="", font=("Helvetica", self.fs(15)),
             fg=WARNING, bg=BG, anchor="w", cursor="hand2",
         )
-        self._alert_left.place(x=25, y=5, width=370, height=40)
+        self._alert_left.place(x=self.x(25), y=self.y(5), width=self.x(370), height=self.y(40))
         self._alert_left.bind("<Button-1>", self._on_alert_tap)
 
         self._alert_right = tk.Label(
-            alert_frame, text="", font=("Helvetica", 15),
+            alert_frame, text="", font=("Helvetica", self.fs(15)),
             fg=ACCENT, bg=BG, anchor="w",
         )
-        self._alert_right.place(x=410, y=5, width=370, height=40)
+        self._alert_right.place(x=self.x(410), y=self.y(5), width=self.x(370), height=self.y(40))
 
         # --- Separator ---
-        tk.Frame(f, bg="#DDDDDD", height=2).place(x=20, y=188, width=W - 40, height=2)
+        tk.Frame(f, bg="#DDDDDD", height=self.y(2)).place(x=self.x(20), y=self.y(188), width=W - self.x(40), height=self.y(2))
 
         # --- User buttons ---
         btn_frame = tk.Frame(f, bg=BG)
-        btn_frame.place(x=0, y=193, width=W, height=235)
+        btn_frame.place(x=0, y=self.y(193), width=W, height=self.y(235))
 
         num_users = len(self._users)
         if num_users == 0:
             tk.Label(btn_frame, text="Sin usuarios configurados",
-                     font=("Helvetica", 16), fg=MUTED, bg=BG).place(
+                     font=("Helvetica", self.fs(16)), fg=MUTED, bg=BG).place(
                 relx=0.5, rely=0.5, anchor="center")
         else:
-            btn_w = (W - 40 - (num_users - 1) * 15) // num_users
+            btn_w = (W - self.x(40) - (num_users - 1) * self.x(15)) // num_users
             for i, user in enumerate(self._users):
-                x = 20 + i * (btn_w + 15)
-                self._create_user_button(btn_frame, user, x, 5, btn_w, 225)
+                bx = self.x(20) + i * (btn_w + self.x(15))
+                self._create_user_button(btn_frame, user, bx, self.y(5), btn_w, self.y(225))
 
         # --- Bottom status bar ---
-        bottom = tk.Frame(f, bg=CARD_BG, height=48)
-        bottom.place(x=0, y=H - 48, width=W, height=48)
+        bottom = tk.Frame(f, bg=CARD_BG, height=self.y(48))
+        bottom.place(x=0, y=H - self.y(48), width=W, height=self.y(48))
 
         self._status_dot = tk.Label(
-            bottom, text="\u25CF", font=("Helvetica", 14),
+            bottom, text="\u25CF", font=("Helvetica", self.fs(14)),
             fg=SUCCESS, bg=CARD_BG,
         )
-        self._status_dot.place(x=15, y=8, height=32)
+        self._status_dot.place(x=self.x(15), y=self.y(8), height=self.y(32))
 
         self._status_label = tk.Label(
-            bottom, text="Maya: Lista", font=("Helvetica", 15),
+            bottom, text="Maya: Lista", font=("Helvetica", self.fs(15)),
             fg=TEXT_SEC, bg=CARD_BG, anchor="w",
         )
-        self._status_label.place(x=38, y=8, height=32)
+        self._status_label.place(x=self.x(38), y=self.y(8), height=self.y(32))
 
         self._mic_hint = tk.Label(
             bottom, text="Di 'Oye Maya' o toca tu nombre",
-            font=("Helvetica", 13), fg=MUTED, bg=CARD_BG, anchor="e",
+            font=("Helvetica", self.fs(13)), fg=MUTED, bg=CARD_BG, anchor="e",
         )
-        self._mic_hint.place(x=350, y=8, width=280, height=32)
+        self._mic_hint.place(x=self.x(350), y=self.y(8), width=self.x(280), height=self.y(32))
 
         # Config + Exit buttons (hidden in production mode)
         if not self.config.get("production_mode", False):
             config_btn = tk.Label(
-                bottom, text="\u2699", font=("Helvetica", 18),
+                bottom, text="\u2699", font=("Helvetica", self.fs(18)),
                 fg=TEXT_SEC, bg=CARD_BG, cursor="hand2",
             )
-            config_btn.place(x=W - 100, y=5, width=40, height=38)
+            config_btn.place(x=W - self.x(100), y=self.y(5), width=self.x(40), height=self.y(38))
             config_btn.bind("<Button-1>", lambda e: self._show_config_screen())
 
             exit_btn = tk.Label(
-                bottom, text="\u2716", font=("Helvetica", 16),
+                bottom, text="\u2716", font=("Helvetica", self.fs(16)),
                 fg=DANGER, bg=CARD_BG, cursor="hand2",
             )
-            exit_btn.place(x=W - 50, y=7, width=40, height=34)
+            exit_btn.place(x=W - self.x(50), y=self.y(7), width=self.x(40), height=self.y(34))
             exit_btn.bind("<Button-1>", lambda e: self._on_close_pressed())
 
     def _create_user_button(self, parent, user, x, y, w, h):
@@ -258,7 +279,7 @@ class Display:
                 try:
                     from PIL import Image, ImageTk, ImageDraw
                     img = Image.open(path)
-                    size = min(w - 20, 90)
+                    size = min(w - self.x(20), self.y(90))
                     img = img.resize((size, size), Image.LANCZOS)
                     # Circular mask
                     mask = Image.new("L", (size, size), 0)
@@ -267,7 +288,7 @@ class Display:
                     tk_img = ImageTk.PhotoImage(img)
                     self._photo_images[uid] = tk_img
                     photo_label = tk.Label(btn, image=tk_img, bg=color, bd=0)
-                    photo_label.place(relx=0.5, y=10, anchor="n")
+                    photo_label.place(relx=0.5, y=self.y(10), anchor="n")
                 except Exception as e:
                     log.warning("Error cargando foto %s: %s", uid, e)
                 break
@@ -275,20 +296,23 @@ class Display:
         if not photo_label:
             # Show initial in circle
             initial = name[0].upper() if name else "?"
-            circle = tk.Canvas(btn, width=80, height=80, bg=color,
+            c_size = self.fs(80)
+            circle = tk.Canvas(btn, width=c_size, height=c_size, bg=color,
                                highlightthickness=0)
-            circle.place(relx=0.5, y=15, anchor="n")
+            circle.place(relx=0.5, y=self.y(15), anchor="n")
             # Lighter circle background
-            circle.create_oval(5, 5, 75, 75, fill="white", outline="")
-            circle.create_text(40, 40, text=initial,
-                               font=("Helvetica", 36, "bold"), fill=color)
+            circle.create_oval(c_size * 5 // 80, c_size * 5 // 80,
+                               c_size * 75 // 80, c_size * 75 // 80,
+                               fill="white", outline="")
+            circle.create_text(c_size // 2, c_size // 2, text=initial,
+                               font=("Helvetica", self.fs(36), "bold"), fill=color)
 
         # Name label
         name_lbl = tk.Label(
-            btn, text=name, font=("Helvetica", 22, "bold"),
+            btn, text=name, font=("Helvetica", self.fs(22), "bold"),
             fg="white", bg=color,
         )
-        name_lbl.place(relx=0.5, y=h - 35, anchor="center")
+        name_lbl.place(relx=0.5, y=h - self.y(35), anchor="center")
 
         # Bind click to all children
         for widget in [btn, name_lbl]:
@@ -302,68 +326,68 @@ class Display:
         self._screens["conversation"] = f
 
         # Header
-        header = tk.Frame(f, bg=ACCENT, height=50)
-        header.place(x=0, y=0, width=W, height=50)
+        header = tk.Frame(f, bg=ACCENT, height=self.y(50))
+        header.place(x=0, y=0, width=W, height=self.y(50))
 
         back_btn = tk.Label(
-            header, text="\u2190 Inicio", font=("Helvetica", 16, "bold"),
+            header, text="\u2190 Inicio", font=("Helvetica", self.fs(16), "bold"),
             fg="white", bg=ACCENT, cursor="hand2",
         )
-        back_btn.place(x=10, y=8, height=35)
+        back_btn.place(x=self.x(10), y=self.y(8), height=self.y(35))
         back_btn.bind("<Button-1>", lambda e: self._conv_go_home())
 
         self._conv_title = tk.Label(
-            header, text="Maya", font=("Helvetica", 20, "bold"),
+            header, text="Maya", font=("Helvetica", self.fs(20), "bold"),
             fg="white", bg=ACCENT,
         )
-        self._conv_title.place(x=130, y=8)
+        self._conv_title.place(x=self.x(130), y=self.y(8))
 
         self._conv_status = tk.Label(
-            header, text="Escuchando...", font=("Helvetica", 16),
+            header, text="Escuchando...", font=("Helvetica", self.fs(16)),
             fg="#FFD0D0", bg=ACCENT, anchor="e",
         )
-        self._conv_status.place(x=W - 220, y=12, width=200)
+        self._conv_status.place(x=W - self.x(220), y=self.y(12), width=self.x(200))
 
         # User said
-        tk.Label(f, text="Dijiste:", font=("Helvetica", 13),
-                 fg=TEXT_SEC, bg=BG).place(x=20, y=65)
+        tk.Label(f, text="Dijiste:", font=("Helvetica", self.fs(13)),
+                 fg=TEXT_SEC, bg=BG).place(x=self.x(20), y=self.y(65))
 
         self._conv_transcript = tk.Label(
-            f, text="...", font=("Helvetica", 18),
+            f, text="...", font=("Helvetica", self.fs(18)),
             fg=TEXT, bg=CARD_BG, anchor="nw", justify="left",
-            wraplength=W - 60, padx=15, pady=10,
+            wraplength=W - self.x(60), padx=self.x(15), pady=self.y(10),
         )
-        self._conv_transcript.place(x=20, y=95, width=W - 40, height=100)
+        self._conv_transcript.place(x=self.x(20), y=self.y(95), width=W - self.x(40), height=self.y(100))
 
         # Maya response
-        tk.Label(f, text="Maya:", font=("Helvetica", 13),
-                 fg=TEXT_SEC, bg=BG).place(x=20, y=210)
+        tk.Label(f, text="Maya:", font=("Helvetica", self.fs(13)),
+                 fg=TEXT_SEC, bg=BG).place(x=self.x(20), y=self.y(210))
 
         self._conv_response = tk.Label(
-            f, text="...", font=("Helvetica", 18),
+            f, text="...", font=("Helvetica", self.fs(18)),
             fg=TEXT, bg=CARD_BG, anchor="nw", justify="left",
-            wraplength=W - 60, padx=15, pady=10,
+            wraplength=W - self.x(60), padx=self.x(15), pady=self.y(10),
         )
-        self._conv_response.place(x=20, y=240, width=W - 40, height=120)
+        self._conv_response.place(x=self.x(20), y=self.y(240), width=W - self.x(40), height=self.y(120))
 
         # Reminders
-        tk.Label(f, text="Recordatorios:", font=("Helvetica", 13, "bold"),
-                 fg=ACCENT, bg=BG).place(x=20, y=375)
+        tk.Label(f, text="Recordatorios:", font=("Helvetica", self.fs(13), "bold"),
+                 fg=ACCENT, bg=BG).place(x=self.x(20), y=self.y(375))
 
         self._conv_reminders = tk.Label(
-            f, text="", font=("Helvetica", 14),
+            f, text="", font=("Helvetica", self.fs(14)),
             fg=TEXT_SEC, bg=BG, anchor="nw", justify="left",
-            wraplength=380,
+            wraplength=self.x(380),
         )
-        self._conv_reminders.place(x=20, y=400, width=400, height=70)
+        self._conv_reminders.place(x=self.x(20), y=self.y(400), width=self.x(400), height=self.y(70))
 
         # Talk button
         self._conv_talk_btn = tk.Button(
-            f, text="Toca para\nhablar", font=("Helvetica", 18, "bold"),
+            f, text="Toca para\nhablar", font=("Helvetica", self.fs(18), "bold"),
             bg=SUCCESS, fg="white", activebackground="#219A52",
             relief="flat", bd=0, command=self._on_talk_pressed,
         )
-        self._conv_talk_btn.place(x=W - 220, y=380, width=200, height=90)
+        self._conv_talk_btn.place(x=W - self.x(220), y=self.y(380), width=self.x(200), height=self.y(90))
 
     def _build_night_screen(self):
         f = tk.Frame(self._container, bg=NIGHT_BG)
@@ -371,13 +395,13 @@ class Display:
         self._screens["night"] = f
 
         self._night_clock = tk.Label(
-            f, text="", font=("Helvetica", 100, "bold"),
+            f, text="", font=("Helvetica", self.fs(100), "bold"),
             fg=NIGHT_TEXT, bg=NIGHT_BG,
         )
         self._night_clock.place(relx=0.5, rely=0.45, anchor="center")
 
         self._night_date = tk.Label(
-            f, text="", font=("Helvetica", 20),
+            f, text="", font=("Helvetica", self.fs(20)),
             fg="#555555", bg=NIGHT_BG,
         )
         self._night_date.place(relx=0.5, rely=0.65, anchor="center")
@@ -404,20 +428,20 @@ class Display:
         self._screens[screen_name] = f
 
         # Header with back button
-        header = tk.Frame(f, bg=color, height=55)
-        header.place(x=0, y=0, width=W, height=55)
+        header = tk.Frame(f, bg=color, height=self.y(55))
+        header.place(x=0, y=0, width=W, height=self.y(55))
 
         back_btn = tk.Label(
-            header, text="\u2190 Inicio", font=("Helvetica", 16, "bold"),
+            header, text="\u2190 Inicio", font=("Helvetica", self.fs(16), "bold"),
             fg="white", bg=color, cursor="hand2",
         )
-        back_btn.place(x=15, y=10, height=35)
+        back_btn.place(x=self.x(15), y=self.y(10), height=self.y(35))
         back_btn.bind("<Button-1>", lambda e: self._go_home())
 
         tk.Label(
-            header, text=name, font=("Helvetica", 22, "bold"),
+            header, text=name, font=("Helvetica", self.fs(22), "bold"),
             fg="white", bg=color,
-        ).place(relx=0.5, y=10, anchor="n")
+        ).place(relx=0.5, y=self.y(10), anchor="n")
 
         # Action buttons grid (3 columns x 3 rows)
         actions = [
@@ -437,12 +461,12 @@ class Display:
              lambda u=user_id: self._start_onboarding(u)),
         ]
 
-        btn_w = 235
-        btn_h = 105
-        start_x = 30
-        start_y = 65
-        gap_x = 25
-        gap_y = 12
+        btn_w = self.x(235)
+        btn_h = self.y(105)
+        start_x = self.x(30)
+        start_y = self.y(65)
+        gap_x = self.x(25)
+        gap_y = self.y(12)
 
         for i, (label, icon, btn_color, cmd) in enumerate(actions):
             col = i % 3
@@ -454,16 +478,16 @@ class Display:
             btn.place(x=bx, y=by, width=btn_w, height=btn_h)
 
             icon_lbl = tk.Label(
-                btn, text=icon, font=("Helvetica", 28),
+                btn, text=icon, font=("Helvetica", self.fs(28)),
                 fg="white", bg=btn_color,
             )
-            icon_lbl.place(relx=0.5, y=15, anchor="n")
+            icon_lbl.place(relx=0.5, y=self.y(15), anchor="n")
 
             text_lbl = tk.Label(
-                btn, text=label, font=("Helvetica", 15, "bold"),
+                btn, text=label, font=("Helvetica", self.fs(15), "bold"),
                 fg="white", bg=btn_color, justify="center",
             )
-            text_lbl.place(relx=0.5, y=60, anchor="n")
+            text_lbl.place(relx=0.5, y=self.y(60), anchor="n")
 
             for w in [btn, icon_lbl, text_lbl]:
                 w.bind("<Button-1>", lambda e, c=cmd: c())
@@ -484,25 +508,25 @@ class Display:
         self._screens[screen_name] = f
 
         # Header
-        header = tk.Frame(f, bg=color, height=55)
-        header.place(x=0, y=0, width=W, height=55)
+        header = tk.Frame(f, bg=color, height=self.y(55))
+        header.place(x=0, y=0, width=W, height=self.y(55))
 
         back_btn = tk.Label(
-            header, text="\u2190 Menu", font=("Helvetica", 16, "bold"),
+            header, text="\u2190 Menu", font=("Helvetica", self.fs(16), "bold"),
             fg="white", bg=color, cursor="hand2",
         )
-        back_btn.place(x=15, y=10, height=35)
+        back_btn.place(x=self.x(15), y=self.y(10), height=self.y(35))
         back_btn.bind("<Button-1>",
                       lambda e, u=user_id: self._open_user_menu(u))
 
         tk.Label(
             header, text=f"Medicamentos - {user['name']}",
-            font=("Helvetica", 20, "bold"), fg="white", bg=color,
-        ).place(relx=0.5, y=10, anchor="n")
+            font=("Helvetica", self.fs(20), "bold"), fg="white", bg=color,
+        ).place(relx=0.5, y=self.y(10), anchor="n")
 
         # Scrollable area via canvas
         canvas = tk.Canvas(f, bg=BG, highlightthickness=0)
-        canvas.place(x=0, y=60, width=W, height=H - 110)
+        canvas.place(x=0, y=self.y(60), width=W, height=H - self.y(110))
 
         inner = tk.Frame(canvas, bg=BG)
         canvas.create_window((0, 0), window=inner, anchor="nw", width=W)
@@ -515,26 +539,26 @@ class Display:
 
         if not meds:
             tk.Label(inner, text="No hay medicamentos registrados",
-                     font=("Helvetica", 18), fg=MUTED, bg=BG,
-                     ).pack(pady=40)
+                     font=("Helvetica", self.fs(18)), fg=MUTED, bg=BG,
+                     ).pack(pady=self.y(40))
         else:
             for med in meds:
                 taken = med["id"] in taken_ids
                 self._create_med_row(inner, med, taken, user_id, color)
 
         # Bottom: home button
-        home_bar = tk.Frame(f, bg=CARD_BG, height=48)
-        home_bar.place(x=0, y=H - 48, width=W, height=48)
+        home_bar = tk.Frame(f, bg=CARD_BG, height=self.y(48))
+        home_bar.place(x=0, y=H - self.y(48), width=W, height=self.y(48))
         home_btn = tk.Label(
-            home_bar, text="\u2302 Inicio", font=("Helvetica", 16, "bold"),
+            home_bar, text="\u2302 Inicio", font=("Helvetica", self.fs(16), "bold"),
             fg=TEXT_SEC, bg=CARD_BG, cursor="hand2",
         )
         home_btn.place(relx=0.5, rely=0.5, anchor="center")
         home_btn.bind("<Button-1>", lambda e: self._go_home())
 
     def _create_med_row(self, parent, med, taken, user_id, color):
-        row = tk.Frame(parent, bg=CARD_BG, height=70)
-        row.pack(fill="x", padx=15, pady=5)
+        row = tk.Frame(parent, bg=CARD_BG, height=self.y(70))
+        row.pack(fill="x", padx=self.x(15), pady=self.y(5))
         row.pack_propagate(False)
 
         # Status indicator
@@ -542,14 +566,14 @@ class Display:
         status_text = "\u2714 Tomado" if taken else "\u23F3 Pendiente"
 
         tk.Label(
-            row, text="\u25CF", font=("Helvetica", 20),
+            row, text="\u25CF", font=("Helvetica", self.fs(20)),
             fg=status_color, bg=CARD_BG,
-        ).place(x=10, y=15)
+        ).place(x=self.x(10), y=self.y(15))
 
         tk.Label(
-            row, text=med["name"], font=("Helvetica", 18, "bold"),
+            row, text=med["name"], font=("Helvetica", self.fs(18), "bold"),
             fg=TEXT, bg=CARD_BG, anchor="w",
-        ).place(x=40, y=8, width=300)
+        ).place(x=self.x(40), y=self.y(8), width=self.x(300))
 
         info = ""
         if med.get("dosage"):
@@ -557,23 +581,23 @@ class Display:
         if med.get("schedule"):
             info += f"  |  {med['schedule']}"
         tk.Label(
-            row, text=info, font=("Helvetica", 13),
+            row, text=info, font=("Helvetica", self.fs(13)),
             fg=TEXT_SEC, bg=CARD_BG, anchor="w",
-        ).place(x=40, y=38, width=400)
+        ).place(x=self.x(40), y=self.y(38), width=self.x(400))
 
         # Status / confirm button
         if taken:
             tk.Label(
-                row, text=status_text, font=("Helvetica", 14, "bold"),
+                row, text=status_text, font=("Helvetica", self.fs(14), "bold"),
                 fg=SUCCESS, bg=CARD_BG,
-            ).place(x=W - 180, y=18, width=150, anchor="nw")
+            ).place(x=W - self.x(180), y=self.y(18), width=self.x(150), anchor="nw")
         else:
             confirm_btn = tk.Label(
-                row, text="Marcar tomado", font=("Helvetica", 14, "bold"),
+                row, text="Marcar tomado", font=("Helvetica", self.fs(14), "bold"),
                 fg="white", bg=SUCCESS, cursor="hand2",
-                padx=10, pady=5,
+                padx=self.x(10), pady=self.y(5),
             )
-            confirm_btn.place(x=W - 200, y=12, width=160, height=45)
+            confirm_btn.place(x=W - self.x(200), y=self.y(12), width=self.x(160), height=self.y(45))
             confirm_btn.bind("<Button-1>",
                              lambda e, m=med, u=user_id:
                              self._confirm_med(m["id"], u))
@@ -593,41 +617,41 @@ class Display:
         self._screens[screen_name] = f
 
         # Header
-        header = tk.Frame(f, bg=color, height=55)
-        header.place(x=0, y=0, width=W, height=55)
+        header = tk.Frame(f, bg=color, height=self.y(55))
+        header.place(x=0, y=0, width=W, height=self.y(55))
         back_btn = tk.Label(header, text="\u2190 Menu",
-                            font=("Helvetica", 16, "bold"),
+                            font=("Helvetica", self.fs(16), "bold"),
                             fg="white", bg=color, cursor="hand2")
-        back_btn.place(x=15, y=10, height=35)
+        back_btn.place(x=self.x(15), y=self.y(10), height=self.y(35))
         back_btn.bind("<Button-1>", lambda e, u=user_id: self._open_user_menu(u))
 
         tk.Label(header, text=f"Contactos - {user['name']}",
-                 font=("Helvetica", 20, "bold"), fg="white", bg=color,
-                 ).place(relx=0.5, y=10, anchor="n")
+                 font=("Helvetica", self.fs(20), "bold"), fg="white", bg=color,
+                 ).place(relx=0.5, y=self.y(10), anchor="n")
 
         contacts = self.db.get_contacts(user_id)
-        y = 70
+        cy = self.y(70)
         if not contacts:
             tk.Label(f, text="No hay contactos registrados",
-                     font=("Helvetica", 18), fg=MUTED, bg=BG).place(x=20, y=y)
+                     font=("Helvetica", self.fs(18)), fg=MUTED, bg=BG).place(x=self.x(20), y=cy)
         else:
             for c in contacts[:6]:
-                row = tk.Frame(f, bg=CARD_BG, height=60)
-                row.place(x=15, y=y, width=W - 30, height=55)
-                tk.Label(row, text=c["name"], font=("Helvetica", 17, "bold"),
-                         fg=TEXT, bg=CARD_BG).place(x=15, y=5)
+                row = tk.Frame(f, bg=CARD_BG, height=self.y(60))
+                row.place(x=self.x(15), y=cy, width=W - self.x(30), height=self.y(55))
+                tk.Label(row, text=c["name"], font=("Helvetica", self.fs(17), "bold"),
+                         fg=TEXT, bg=CARD_BG).place(x=self.x(15), y=self.y(5))
                 info = c.get("relationship", "")
                 if c.get("phone"):
                     info += f"  |  {c['phone']}"
-                tk.Label(row, text=info, font=("Helvetica", 13),
-                         fg=TEXT_SEC, bg=CARD_BG).place(x=15, y=30)
-                y += 62
+                tk.Label(row, text=info, font=("Helvetica", self.fs(13)),
+                         fg=TEXT_SEC, bg=CARD_BG).place(x=self.x(15), y=self.y(30))
+                cy += self.y(62)
 
         # Bottom home
-        home_bar = tk.Frame(f, bg=CARD_BG, height=48)
-        home_bar.place(x=0, y=H - 48, width=W, height=48)
+        home_bar = tk.Frame(f, bg=CARD_BG, height=self.y(48))
+        home_bar.place(x=0, y=H - self.y(48), width=W, height=self.y(48))
         home_btn = tk.Label(home_bar, text="\u2302 Inicio",
-                            font=("Helvetica", 16, "bold"),
+                            font=("Helvetica", self.fs(16), "bold"),
                             fg=TEXT_SEC, bg=CARD_BG, cursor="hand2")
         home_btn.place(relx=0.5, rely=0.5, anchor="center")
         home_btn.bind("<Button-1>", lambda e: self._go_home())
@@ -646,39 +670,39 @@ class Display:
         f.place(x=0, y=0, width=W, height=H)
         self._screens[screen_name] = f
 
-        header = tk.Frame(f, bg=color, height=55)
-        header.place(x=0, y=0, width=W, height=55)
+        header = tk.Frame(f, bg=color, height=self.y(55))
+        header.place(x=0, y=0, width=W, height=self.y(55))
         back_btn = tk.Label(header, text="\u2190 Menu",
-                            font=("Helvetica", 16, "bold"),
+                            font=("Helvetica", self.fs(16), "bold"),
                             fg="white", bg=color, cursor="hand2")
-        back_btn.place(x=15, y=10, height=35)
+        back_btn.place(x=self.x(15), y=self.y(10), height=self.y(35))
         back_btn.bind("<Button-1>", lambda e, u=user_id: self._open_user_menu(u))
 
         tk.Label(header, text=f"Recordatorios - {user['name']}",
-                 font=("Helvetica", 20, "bold"), fg="white", bg=color,
-                 ).place(relx=0.5, y=10, anchor="n")
+                 font=("Helvetica", self.fs(20), "bold"), fg="white", bg=color,
+                 ).place(relx=0.5, y=self.y(10), anchor="n")
 
         reminders = self.db.get_pending_reminders(user_id)
-        y = 70
+        ry = self.y(70)
         if not reminders:
             tk.Label(f, text="No hay recordatorios pendientes",
-                     font=("Helvetica", 18), fg=MUTED, bg=BG).place(x=20, y=y)
+                     font=("Helvetica", self.fs(18)), fg=MUTED, bg=BG).place(x=self.x(20), y=ry)
         else:
             for r in reminders[:7]:
-                row = tk.Frame(f, bg=CARD_BG, height=50)
-                row.place(x=15, y=y, width=W - 30, height=48)
+                row = tk.Frame(f, bg=CARD_BG, height=self.y(50))
+                row.place(x=self.x(15), y=ry, width=W - self.x(30), height=self.y(48))
                 tk.Label(row, text=f"\u23F0 {r['remind_at']}",
-                         font=("Helvetica", 16, "bold"),
-                         fg=ACCENT, bg=CARD_BG).place(x=15, y=10)
-                tk.Label(row, text=r["text"], font=("Helvetica", 15),
-                         fg=TEXT, bg=CARD_BG).place(x=120, y=10)
-                y += 55
+                         font=("Helvetica", self.fs(16), "bold"),
+                         fg=ACCENT, bg=CARD_BG).place(x=self.x(15), y=self.y(10))
+                tk.Label(row, text=r["text"], font=("Helvetica", self.fs(15)),
+                         fg=TEXT, bg=CARD_BG).place(x=self.x(120), y=self.y(10))
+                ry += self.y(55)
 
         # Bottom home
-        home_bar = tk.Frame(f, bg=CARD_BG, height=48)
-        home_bar.place(x=0, y=H - 48, width=W, height=48)
+        home_bar = tk.Frame(f, bg=CARD_BG, height=self.y(48))
+        home_bar.place(x=0, y=H - self.y(48), width=W, height=self.y(48))
         home_btn = tk.Label(home_bar, text="\u2302 Inicio",
-                            font=("Helvetica", 16, "bold"),
+                            font=("Helvetica", self.fs(16), "bold"),
                             fg=TEXT_SEC, bg=CARD_BG, cursor="hand2")
         home_btn.place(relx=0.5, rely=0.5, anchor="center")
         home_btn.bind("<Button-1>", lambda e: self._go_home())
@@ -699,25 +723,25 @@ class Display:
         self._screens[screen_name] = f
 
         # Header
-        header = tk.Frame(f, bg=color, height=55)
-        header.place(x=0, y=0, width=W, height=55)
+        header = tk.Frame(f, bg=color, height=self.y(55))
+        header.place(x=0, y=0, width=W, height=self.y(55))
 
         back_btn = tk.Label(
-            header, text="\u2190 Menu", font=("Helvetica", 16, "bold"),
+            header, text="\u2190 Menu", font=("Helvetica", self.fs(16), "bold"),
             fg="white", bg=color, cursor="hand2",
         )
-        back_btn.place(x=15, y=10, height=35)
+        back_btn.place(x=self.x(15), y=self.y(10), height=self.y(35))
         back_btn.bind("<Button-1>",
                       lambda e, u=user_id: self._open_user_menu(u))
 
         tk.Label(
             header, text=f"Tratamiento - {user['name']}",
-            font=("Helvetica", 20, "bold"), fg="white", bg=color,
-        ).place(relx=0.5, y=10, anchor="n")
+            font=("Helvetica", self.fs(20), "bold"), fg="white", bg=color,
+        ).place(relx=0.5, y=self.y(10), anchor="n")
 
         # Scrollable area
         canvas = tk.Canvas(f, bg=BG, highlightthickness=0)
-        canvas.place(x=0, y=60, width=W, height=H - 110)
+        canvas.place(x=0, y=self.y(60), width=W, height=H - self.y(110))
 
         inner = tk.Frame(canvas, bg=BG)
         canvas.create_window((0, 0), window=inner, anchor="nw", width=W)
@@ -726,17 +750,17 @@ class Display:
 
         if not schemas:
             tk.Label(inner, text="No hay esquemas de tratamiento",
-                     font=("Helvetica", 18), fg=MUTED, bg=BG,
-                     ).pack(pady=40)
+                     font=("Helvetica", self.fs(18)), fg=MUTED, bg=BG,
+                     ).pack(pady=self.y(40))
         else:
             for schema in schemas:
                 self._create_treatment_card(inner, schema, color)
 
         # Bottom home
-        home_bar = tk.Frame(f, bg=CARD_BG, height=48)
-        home_bar.place(x=0, y=H - 48, width=W, height=48)
+        home_bar = tk.Frame(f, bg=CARD_BG, height=self.y(48))
+        home_bar.place(x=0, y=H - self.y(48), width=W, height=self.y(48))
         home_btn = tk.Label(
-            home_bar, text="\u2302 Inicio", font=("Helvetica", 16, "bold"),
+            home_bar, text="\u2302 Inicio", font=("Helvetica", self.fs(16), "bold"),
             fg=TEXT_SEC, bg=CARD_BG, cursor="hand2",
         )
         home_btn.place(relx=0.5, rely=0.5, anchor="center")
@@ -750,20 +774,20 @@ class Display:
 
         # Card frame
         card = tk.Frame(parent, bg=CARD_BG)
-        card.pack(fill="x", padx=15, pady=8)
+        card.pack(fill="x", padx=self.x(15), pady=self.y(8))
 
         # Schema name header
         name_lbl = tk.Label(
             card, text=f"\U0001F489 {schema['name']}",
-            font=("Helvetica", 18, "bold"), fg=TEXT, bg=CARD_BG, anchor="w",
+            font=("Helvetica", self.fs(18), "bold"), fg=TEXT, bg=CARD_BG, anchor="w",
         )
-        name_lbl.pack(fill="x", padx=15, pady=(10, 2))
+        name_lbl.pack(fill="x", padx=self.x(15), pady=(self.y(10), self.y(2)))
 
         # What is measured
         tk.Label(
             card, text=f"Medicion: {m_name} ({unit})" if unit else f"Medicion: {m_name}",
-            font=("Helvetica", 14), fg=TEXT_SEC, bg=CARD_BG, anchor="w",
-        ).pack(fill="x", padx=15, pady=(0, 5))
+            font=("Helvetica", self.fs(14)), fg=TEXT_SEC, bg=CARD_BG, anchor="w",
+        ).pack(fill="x", padx=self.x(15), pady=(0, self.y(5)))
 
         # Alert thresholds
         alert_parts = []
@@ -774,8 +798,8 @@ class Display:
         if alert_parts:
             tk.Label(
                 card, text="  |  ".join(alert_parts),
-                font=("Helvetica", 13), fg=DANGER, bg=CARD_BG, anchor="w",
-            ).pack(fill="x", padx=15, pady=(0, 5))
+                font=("Helvetica", self.fs(13)), fg=DANGER, bg=CARD_BG, anchor="w",
+            ).pack(fill="x", padx=self.x(15), pady=(0, self.y(5)))
 
         # Dose ranges
         if ranges:
@@ -787,24 +811,24 @@ class Display:
                 if r.get("time_of_day") and r["time_of_day"] != "any":
                     range_text += f"  ({r['time_of_day']})"
                 tk.Label(
-                    card, text=range_text, font=("Helvetica", 15),
+                    card, text=range_text, font=("Helvetica", self.fs(15)),
                     fg=TEXT, bg=CARD_BG, anchor="w",
-                ).pack(fill="x", padx=15, pady=1)
+                ).pack(fill="x", padx=self.x(15), pady=self.y(1))
         else:
             tk.Label(
                 card, text="  Sin rangos configurados",
-                font=("Helvetica", 14), fg=MUTED, bg=CARD_BG, anchor="w",
-            ).pack(fill="x", padx=15, pady=2)
+                font=("Helvetica", self.fs(14)), fg=MUTED, bg=CARD_BG, anchor="w",
+            ).pack(fill="x", padx=self.x(15), pady=self.y(2))
 
         # Notes
         if schema.get("notes"):
             tk.Label(
                 card, text=schema["notes"],
-                font=("Helvetica", 12), fg=MUTED, bg=CARD_BG, anchor="w",
-            ).pack(fill="x", padx=15, pady=(5, 10))
+                font=("Helvetica", self.fs(12)), fg=MUTED, bg=CARD_BG, anchor="w",
+            ).pack(fill="x", padx=self.x(15), pady=(self.y(5), self.y(10)))
         else:
             # Bottom padding
-            tk.Frame(card, bg=CARD_BG, height=10).pack()
+            tk.Frame(card, bg=CARD_BG, height=self.y(10)).pack()
 
     def _build_my_day_screen(self, user_id: str):
         screen_name = f"myday_{user_id}"
@@ -820,19 +844,19 @@ class Display:
         f.place(x=0, y=0, width=W, height=H)
         self._screens[screen_name] = f
 
-        header = tk.Frame(f, bg=color, height=55)
-        header.place(x=0, y=0, width=W, height=55)
+        header = tk.Frame(f, bg=color, height=self.y(55))
+        header.place(x=0, y=0, width=W, height=self.y(55))
         back_btn = tk.Label(header, text="\u2190 Menu",
-                            font=("Helvetica", 16, "bold"),
+                            font=("Helvetica", self.fs(16), "bold"),
                             fg="white", bg=color, cursor="hand2")
-        back_btn.place(x=15, y=10, height=35)
+        back_btn.place(x=self.x(15), y=self.y(10), height=self.y(35))
         back_btn.bind("<Button-1>", lambda e, u=user_id: self._open_user_menu(u))
 
         tk.Label(header, text=f"Mi dia - {user['name']}",
-                 font=("Helvetica", 20, "bold"), fg="white", bg=color,
-                 ).place(relx=0.5, y=10, anchor="n")
+                 font=("Helvetica", self.fs(20), "bold"), fg="white", bg=color,
+                 ).place(relx=0.5, y=self.y(10), anchor="n")
 
-        y = 70
+        dy = self.y(70)
 
         # Weather
         if self.weather:
@@ -840,13 +864,13 @@ class Display:
             if wd:
                 icon = _weather_icon(wd.get("icon", ""))
                 tk.Label(f, text=f"{icon} {wd['temp']}\u00B0C - {wd['description']}",
-                         font=("Helvetica", 20), fg=TEXT, bg=BG).place(x=20, y=y)
-                y += 40
+                         font=("Helvetica", self.fs(20)), fg=TEXT, bg=BG).place(x=self.x(20), y=dy)
+                dy += self.y(40)
 
         # Medications status
-        tk.Label(f, text="Medicamentos:", font=("Helvetica", 17, "bold"),
-                 fg=WARNING, bg=BG).place(x=20, y=y)
-        y += 30
+        tk.Label(f, text="Medicamentos:", font=("Helvetica", self.fs(17), "bold"),
+                 fg=WARNING, bg=BG).place(x=self.x(20), y=dy)
+        dy += self.y(30)
 
         meds = self.db.get_medications(user_id, active_only=True)
         today = datetime.now().strftime("%Y-%m-%d")
@@ -854,40 +878,40 @@ class Display:
         taken_ids = {e["medication_id"] for e in log_today}
 
         if not meds:
-            tk.Label(f, text="  Sin medicamentos", font=("Helvetica", 15),
-                     fg=MUTED, bg=BG).place(x=20, y=y)
-            y += 25
+            tk.Label(f, text="  Sin medicamentos", font=("Helvetica", self.fs(15)),
+                     fg=MUTED, bg=BG).place(x=self.x(20), y=dy)
+            dy += self.y(25)
         else:
             for med in meds:
                 taken = med["id"] in taken_ids
                 icon = "\u2714" if taken else "\u23F3"
                 clr = SUCCESS if taken else WARNING
                 tk.Label(f, text=f"  {icon} {med['name']}",
-                         font=("Helvetica", 15), fg=clr, bg=BG).place(x=20, y=y)
-                y += 25
+                         font=("Helvetica", self.fs(15)), fg=clr, bg=BG).place(x=self.x(20), y=dy)
+                dy += self.y(25)
 
-        y += 15
+        dy += self.y(15)
 
         # Reminders
-        tk.Label(f, text="Recordatorios:", font=("Helvetica", 17, "bold"),
-                 fg=ACCENT, bg=BG).place(x=20, y=y)
-        y += 30
+        tk.Label(f, text="Recordatorios:", font=("Helvetica", self.fs(17), "bold"),
+                 fg=ACCENT, bg=BG).place(x=self.x(20), y=dy)
+        dy += self.y(30)
 
         reminders = self.db.get_pending_reminders(user_id)
         if not reminders:
-            tk.Label(f, text="  Sin recordatorios", font=("Helvetica", 15),
-                     fg=MUTED, bg=BG).place(x=20, y=y)
+            tk.Label(f, text="  Sin recordatorios", font=("Helvetica", self.fs(15)),
+                     fg=MUTED, bg=BG).place(x=self.x(20), y=dy)
         else:
             for r in reminders[:5]:
                 tk.Label(f, text=f"  \u23F0 {r['remind_at']} - {r['text']}",
-                         font=("Helvetica", 15), fg=TEXT, bg=BG).place(x=20, y=y)
-                y += 25
+                         font=("Helvetica", self.fs(15)), fg=TEXT, bg=BG).place(x=self.x(20), y=dy)
+                dy += self.y(25)
 
         # Bottom home
-        home_bar = tk.Frame(f, bg=CARD_BG, height=48)
-        home_bar.place(x=0, y=H - 48, width=W, height=48)
+        home_bar = tk.Frame(f, bg=CARD_BG, height=self.y(48))
+        home_bar.place(x=0, y=H - self.y(48), width=W, height=self.y(48))
         home_btn = tk.Label(home_bar, text="\u2302 Inicio",
-                            font=("Helvetica", 16, "bold"),
+                            font=("Helvetica", self.fs(16), "bold"),
                             fg=TEXT_SEC, bg=CARD_BG, cursor="hand2")
         home_btn.place(relx=0.5, rely=0.5, anchor="center")
         home_btn.bind("<Button-1>", lambda e: self._go_home())
@@ -901,90 +925,90 @@ class Display:
         f.place(x=0, y=0, width=W, height=H)
         self._screens[screen_name] = f
 
-        header = tk.Frame(f, bg="#34495E", height=55)
-        header.place(x=0, y=0, width=W, height=55)
+        header = tk.Frame(f, bg="#34495E", height=self.y(55))
+        header.place(x=0, y=0, width=W, height=self.y(55))
         back_btn = tk.Label(header, text="\u2190 Inicio",
-                            font=("Helvetica", 16, "bold"),
+                            font=("Helvetica", self.fs(16), "bold"),
                             fg="white", bg="#34495E", cursor="hand2")
-        back_btn.place(x=15, y=10, height=35)
+        back_btn.place(x=self.x(15), y=self.y(10), height=self.y(35))
         back_btn.bind("<Button-1>", lambda e: self._go_home())
 
         tk.Label(header, text="Configuracion",
-                 font=("Helvetica", 20, "bold"), fg="white", bg="#34495E",
-                 ).place(relx=0.5, y=10, anchor="n")
+                 font=("Helvetica", self.fs(20), "bold"), fg="white", bg="#34495E",
+                 ).place(relx=0.5, y=self.y(10), anchor="n")
 
-        y = 75
+        cy = self.y(75)
 
         # --- Bluetooth section ---
         tk.Label(f, text="Bluetooth - Bocina/Microfono",
-                 font=("Helvetica", 18, "bold"), fg=TEXT, bg=BG,
-                 ).place(x=20, y=y)
-        y += 35
+                 font=("Helvetica", self.fs(18), "bold"), fg=TEXT, bg=BG,
+                 ).place(x=self.x(20), y=cy)
+        cy += self.y(35)
 
         self._bt_status_label = tk.Label(
-            f, text="Verificando...", font=("Helvetica", 15),
+            f, text="Verificando...", font=("Helvetica", self.fs(15)),
             fg=TEXT_SEC, bg=BG, anchor="w",
         )
-        self._bt_status_label.place(x=20, y=y, width=500)
+        self._bt_status_label.place(x=self.x(20), y=cy, width=self.x(500))
 
         bt_reconnect = tk.Label(
-            f, text="Reconectar", font=("Helvetica", 15, "bold"),
-            fg="white", bg="#3498DB", cursor="hand2", padx=15, pady=5,
+            f, text="Reconectar", font=("Helvetica", self.fs(15), "bold"),
+            fg="white", bg="#3498DB", cursor="hand2", padx=self.x(15), pady=self.y(5),
         )
-        bt_reconnect.place(x=W - 170, y=y - 5, width=150, height=40)
+        bt_reconnect.place(x=W - self.x(170), y=cy - self.y(5), width=self.x(150), height=self.y(40))
         bt_reconnect.bind("<Button-1>", lambda e: self._bt_reconnect())
-        y += 50
+        cy += self.y(50)
 
         # --- WiFi section ---
-        tk.Frame(f, bg="#DDDDDD", height=2).place(x=20, y=y, width=W - 40)
-        y += 15
+        tk.Frame(f, bg="#DDDDDD", height=self.y(2)).place(x=self.x(20), y=cy, width=W - self.x(40))
+        cy += self.y(15)
 
         tk.Label(f, text="WiFi",
-                 font=("Helvetica", 18, "bold"), fg=TEXT, bg=BG,
-                 ).place(x=20, y=y)
-        y += 35
+                 font=("Helvetica", self.fs(18), "bold"), fg=TEXT, bg=BG,
+                 ).place(x=self.x(20), y=cy)
+        cy += self.y(35)
 
         self._wifi_status_label = tk.Label(
-            f, text="Verificando...", font=("Helvetica", 15),
+            f, text="Verificando...", font=("Helvetica", self.fs(15)),
             fg=TEXT_SEC, bg=BG, anchor="w",
         )
-        self._wifi_status_label.place(x=20, y=y, width=600)
-        y += 35
+        self._wifi_status_label.place(x=self.x(20), y=cy, width=self.x(600))
+        cy += self.y(35)
 
         wifi_connect_btn = tk.Label(
-            f, text="Conectar WiFi", font=("Helvetica", 15, "bold"),
-            fg="white", bg="#3498DB", cursor="hand2", padx=15, pady=5,
+            f, text="Conectar WiFi", font=("Helvetica", self.fs(15), "bold"),
+            fg="white", bg="#3498DB", cursor="hand2", padx=self.x(15), pady=self.y(5),
         )
-        wifi_connect_btn.place(x=W - 170, y=y - 5, width=150, height=40)
+        wifi_connect_btn.place(x=W - self.x(170), y=cy - self.y(5), width=self.x(150), height=self.y(40))
         wifi_connect_btn.bind("<Button-1>", lambda e: self._wifi_connect_dialog())
 
         self._wifi_ip_label = tk.Label(
-            f, text="", font=("Helvetica", 14),
+            f, text="", font=("Helvetica", self.fs(14)),
             fg=MUTED, bg=BG, anchor="w",
         )
-        self._wifi_ip_label.place(x=20, y=y + 30, width=600)
-        y += 60
+        self._wifi_ip_label.place(x=self.x(20), y=cy + self.y(30), width=self.x(600))
+        cy += self.y(60)
 
         # --- System info ---
-        tk.Frame(f, bg="#DDDDDD", height=2).place(x=20, y=y, width=W - 40)
-        y += 15
+        tk.Frame(f, bg="#DDDDDD", height=self.y(2)).place(x=self.x(20), y=cy, width=W - self.x(40))
+        cy += self.y(15)
 
         tk.Label(f, text="Sistema",
-                 font=("Helvetica", 18, "bold"), fg=TEXT, bg=BG,
-                 ).place(x=20, y=y)
-        y += 35
+                 font=("Helvetica", self.fs(18), "bold"), fg=TEXT, bg=BG,
+                 ).place(x=self.x(20), y=cy)
+        cy += self.y(35)
 
         self._sys_info_label = tk.Label(
-            f, text="", font=("Helvetica", 14),
+            f, text="", font=("Helvetica", self.fs(14)),
             fg=TEXT_SEC, bg=BG, anchor="nw", justify="left",
         )
-        self._sys_info_label.place(x=20, y=y, width=600, height=60)
+        self._sys_info_label.place(x=self.x(20), y=cy, width=self.x(600), height=self.y(60))
 
         # Bottom home
-        home_bar = tk.Frame(f, bg=CARD_BG, height=48)
-        home_bar.place(x=0, y=H - 48, width=W, height=48)
+        home_bar = tk.Frame(f, bg=CARD_BG, height=self.y(48))
+        home_bar.place(x=0, y=H - self.y(48), width=W, height=self.y(48))
         home_btn = tk.Label(home_bar, text="\u2302 Inicio",
-                            font=("Helvetica", 16, "bold"),
+                            font=("Helvetica", self.fs(16), "bold"),
                             fg=TEXT_SEC, bg=CARD_BG, cursor="hand2")
         home_btn.place(relx=0.5, rely=0.5, anchor="center")
         home_btn.bind("<Button-1>", lambda e: self._go_home())
@@ -1098,11 +1122,11 @@ class Display:
         overlay.place(x=0, y=0, width=W, height=H)
         overlay.lift()
 
-        header = tk.Frame(overlay, bg="#34495E", height=55)
-        header.place(x=0, y=0, width=W, height=55)
+        header = tk.Frame(overlay, bg="#34495E", height=self.y(55))
+        header.place(x=0, y=0, width=W, height=self.y(55))
         tk.Label(header, text="Conectar WiFi",
-                 font=("Helvetica", 20, "bold"), fg="white", bg="#34495E",
-                 ).place(relx=0.5, y=10, anchor="n")
+                 font=("Helvetica", self.fs(20), "bold"), fg="white", bg="#34495E",
+                 ).place(relx=0.5, y=self.y(10), anchor="n")
 
         def _close_overlay():
             overlay.destroy()
@@ -1111,49 +1135,49 @@ class Display:
                            daemon=True).start()
 
         back_btn = tk.Label(header, text="\u2190 Volver",
-                            font=("Helvetica", 16, "bold"),
+                            font=("Helvetica", self.fs(16), "bold"),
                             fg="white", bg="#34495E", cursor="hand2")
-        back_btn.place(x=15, y=10, height=35)
+        back_btn.place(x=self.x(15), y=self.y(10), height=self.y(35))
         back_btn.bind("<Button-1>", lambda e: _close_overlay())
 
         # Network list
         listframe = tk.Frame(overlay, bg=BG)
-        listframe.place(x=20, y=70, width=W - 40, height=280)
+        listframe.place(x=self.x(20), y=self.y(70), width=W - self.x(40), height=self.y(280))
 
         scrollbar = tk.Scrollbar(listframe)
         scrollbar.pack(side="right", fill="y")
 
-        listbox = tk.Listbox(listframe, font=("Helvetica", 16),
+        listbox = tk.Listbox(listframe, font=("Helvetica", self.fs(16)),
                              bg=CARD_BG, fg=TEXT, selectbackground=ACCENT,
                              yscrollcommand=scrollbar.set, height=8)
         listbox.pack(fill="both", expand=True)
         scrollbar.config(command=listbox.yview)
 
         status_lbl = tk.Label(overlay, text="Escaneando...",
-                              font=("Helvetica", 14), fg=TEXT_SEC, bg=BG)
-        status_lbl.place(x=20, y=360, width=W - 40, height=30)
+                              font=("Helvetica", self.fs(14)), fg=TEXT_SEC, bg=BG)
+        status_lbl.place(x=self.x(20), y=self.y(360), width=W - self.x(40), height=self.y(30))
 
         # Buttons
         btn_frame = tk.Frame(overlay, bg=BG)
-        btn_frame.place(x=20, y=400, width=W - 40, height=50)
+        btn_frame.place(x=self.x(20), y=self.y(400), width=W - self.x(40), height=self.y(50))
 
         connect_btn = tk.Label(btn_frame, text="Conectar",
-                               font=("Helvetica", 16, "bold"),
+                               font=("Helvetica", self.fs(16), "bold"),
                                fg="white", bg=SUCCESS, cursor="hand2",
-                               padx=20, pady=8)
-        connect_btn.pack(side="left", padx=10)
+                               padx=self.x(20), pady=self.y(8))
+        connect_btn.pack(side="left", padx=self.x(10))
 
         rescan_btn = tk.Label(btn_frame, text="Rescan",
-                              font=("Helvetica", 16, "bold"),
+                              font=("Helvetica", self.fs(16), "bold"),
                               fg="white", bg=WARNING, cursor="hand2",
-                              padx=20, pady=8)
-        rescan_btn.pack(side="left", padx=10)
+                              padx=self.x(20), pady=self.y(8))
+        rescan_btn.pack(side="left", padx=self.x(10))
 
         close_btn = tk.Label(btn_frame, text="Cerrar",
-                             font=("Helvetica", 16, "bold"),
+                             font=("Helvetica", self.fs(16), "bold"),
                              fg="white", bg=DANGER, cursor="hand2",
-                             padx=20, pady=8)
-        close_btn.pack(side="right", padx=10)
+                             padx=self.x(20), pady=self.y(8))
+        close_btn.pack(side="right", padx=self.x(10))
         close_btn.bind("<Button-1>", lambda e: _close_overlay())
 
         def _scan():
@@ -1206,18 +1230,18 @@ class Display:
 
         def _show_password_entry(ssid):
             pwd_frame = tk.Frame(overlay, bg=CARD_BG)
-            pwd_frame.place(x=50, y=180, width=W - 100, height=120)
+            pwd_frame.place(x=self.x(50), y=self.y(180), width=W - self.x(100), height=self.y(120))
 
             tk.Label(pwd_frame, text=f"Password para {ssid}:",
-                     font=("Helvetica", 16), fg=TEXT, bg=CARD_BG,
-                     ).pack(pady=(15, 5))
-            pwd_entry = tk.Entry(pwd_frame, font=("Helvetica", 16),
+                     font=("Helvetica", self.fs(16)), fg=TEXT, bg=CARD_BG,
+                     ).pack(pady=(self.y(15), self.y(5)))
+            pwd_entry = tk.Entry(pwd_frame, font=("Helvetica", self.fs(16)),
                                  show="*", width=25)
-            pwd_entry.pack(pady=5)
+            pwd_entry.pack(pady=self.y(5))
             pwd_entry.focus_set()
 
             pwd_btn_frame = tk.Frame(pwd_frame, bg=CARD_BG)
-            pwd_btn_frame.pack(pady=5)
+            pwd_btn_frame.pack(pady=self.y(5))
 
             def _submit_pwd():
                 pwd = pwd_entry.get()
@@ -1230,18 +1254,18 @@ class Display:
                 pwd_frame.destroy()
 
             ok_btn = tk.Label(pwd_btn_frame, text="OK",
-                              font=("Helvetica", 14, "bold"),
+                              font=("Helvetica", self.fs(14), "bold"),
                               fg="white", bg=SUCCESS, cursor="hand2",
-                              padx=15, pady=3)
-            ok_btn.pack(side="left", padx=10)
+                              padx=self.x(15), pady=self.y(3))
+            ok_btn.pack(side="left", padx=self.x(10))
             ok_btn.bind("<Button-1>", lambda e: _submit_pwd())
             pwd_entry.bind("<Return>", lambda e: _submit_pwd())
 
             cancel_btn = tk.Label(pwd_btn_frame, text="Cancelar",
-                                  font=("Helvetica", 14, "bold"),
+                                  font=("Helvetica", self.fs(14), "bold"),
                                   fg="white", bg=DANGER, cursor="hand2",
-                                  padx=15, pady=3)
-            cancel_btn.pack(side="left", padx=10)
+                                  padx=self.x(15), pady=self.y(3))
+            cancel_btn.pack(side="left", padx=self.x(10))
             cancel_btn.bind("<Button-1>", lambda e: _cancel_pwd())
 
         def _do_connect(cmd, ssid):
