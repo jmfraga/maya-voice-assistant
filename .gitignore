@@ -5,3 +5,5 @@ logs/
 voiceprints/*.npy
 *.ppn
 config.yaml
+CLAUDE.md
+HANDOFF.md
