@@ -124,6 +124,23 @@ CREATE TABLE IF NOT EXISTS admin_users (
     role TEXT NOT NULL DEFAULT 'familiar',
     created_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
+
+CREATE TABLE IF NOT EXISTS telegram_conversations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS pending_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    from_name TEXT NOT NULL,
+    message TEXT NOT NULL,
+    delivered INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
 """
 
 
@@ -653,3 +670,59 @@ class Database:
     def delete_admin_user(self, user_id: int):
         with self._conn() as conn:
             conn.execute("DELETE FROM admin_users WHERE id = ?", (user_id,))
+
+    # --- Telegram Conversations ---
+    def get_contacts_by_chat_id(self, chat_id: int) -> list[dict]:
+        """Get all contacts + user info for a given Telegram chat_id."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT c.*, u.real_name as user_real_name "
+                "FROM contacts c JOIN users u ON c.user_id = u.id "
+                "WHERE c.telegram_chat_id = ?",
+                (chat_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def save_telegram_conversation(self, chat_id: int, role: str, content: str):
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO telegram_conversations (chat_id, role, content) "
+                "VALUES (?, ?, ?)",
+                (chat_id, role, content),
+            )
+
+    def get_telegram_history(self, chat_id: int, limit: int = 10) -> list[dict]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM telegram_conversations WHERE chat_id = ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (chat_id, limit),
+            ).fetchall()
+            return [dict(r) for r in reversed(rows)]
+
+    # --- Pending Messages (Telegram relay) ---
+    def add_pending_message(self, user_id: str, from_name: str, message: str) -> int:
+        with self._conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO pending_messages (user_id, from_name, message) "
+                "VALUES (?, ?, ?)",
+                (user_id, from_name, message),
+            )
+            log.info("Mensaje pendiente para %s de %s: %s", user_id, from_name, message[:50])
+            return cur.lastrowid
+
+    def get_pending_messages(self, user_id: str) -> list[dict]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM pending_messages WHERE user_id = ? AND delivered = 0 "
+                "ORDER BY created_at",
+                (user_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def mark_message_delivered(self, msg_id: int):
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE pending_messages SET delivered = 1 WHERE id = ?",
+                (msg_id,),
+            )

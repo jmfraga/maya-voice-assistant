@@ -279,6 +279,24 @@ def execute_actions(actions: list[dict], user_id: str, db: Database,
                     db.save_memory(user_id, cat, content)
                 results.append(f"Memoria guardada: {content}")
 
+            elif atype == "MENSAJE_PENDIENTE":
+                message = action.get("message", "")
+                if message and db:
+                    # When user says "tell X that...", save for all contacts named X
+                    # For now, save for the speaking user's contacts
+                    contacts = db.get_contacts(user_id)
+                    if contacts:
+                        for c in contacts:
+                            if c.get("telegram_chat_id"):
+                                telegram.send_to_chat_id(
+                                    c["telegram_chat_id"],
+                                    f"Mensaje de {db.get_user(user_id)['real_name']}: {message}"
+                                )
+                                results.append(f"Mensaje enviado a {c['name']}")
+                                break
+                    else:
+                        results.append("No hay contactos para enviar el mensaje")
+
             elif atype == "CONSULTA_TRATAMIENTO":
                 _handle_treatment_query(action, user_id, db, telegram, results)
 
@@ -619,8 +637,8 @@ def main():
         BASE_DIR,
     )
 
-    # Telegram (with DB for self-registration)
-    telegram = TelegramBot(config.get("telegram", {}), db=db)
+    # Telegram (with DB, LLM, STT for bidirectional chat)
+    telegram = TelegramBot(config.get("telegram", {}), db=db, llm=llm, stt=stt)
     telegram.start_polling()
 
     # Admin web interface (accessible via Tailscale)
@@ -788,6 +806,21 @@ def main():
                 user_id = list(users.keys())[0] if users else "default"
                 user_name = users.get(user_id, {}).get("real_name", "Usuario")
                 db.ensure_user(user_id, user_name)
+
+            # d2. Deliver pending messages (from Telegram contacts)
+            if user_id:
+                pending = db.get_pending_messages(user_id)
+                if pending:
+                    display.set_status("Tienes mensajes", "#4ecca3")
+                    for pm in pending:
+                        msg_text = f"Tienes un mensaje de {pm['from_name']}: {pm['message']}"
+                        display.set_response(msg_text)
+                        msg_audio = tts.speak(msg_text)
+                        if msg_audio:
+                            play_audio(msg_audio)
+                            os.unlink(msg_audio)
+                        db.mark_message_delivered(pm["id"])
+                        time.sleep(0.5)
 
             # e. Transcribe
             display.set_status("Procesando...", "#f0a500")

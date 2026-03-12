@@ -38,6 +38,8 @@ def parse_actions(text: str) -> tuple[str, list[dict]]:
             elif action["type"] == "CONSULTA_TRATAMIENTO" and len(parts) >= 3:
                 action["measurement"] = parts[1].strip()
                 action["value"] = parts[2].strip()
+            elif action["type"] == "MENSAJE_PENDIENTE" and len(parts) >= 2:
+                action["message"] = ":".join(parts[1:]).strip()
             actions.append(action)
 
     clean = ACTION_PATTERN.sub("", text).strip()
@@ -189,3 +191,89 @@ class LLM:
         )
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"]
+
+    def chat_telegram(self, text: str, contact_name: str, relationship: str,
+                      db=None, user_ids: list[str] = None,
+                      chat_history: list[dict] = None) -> tuple[str, list[dict]]:
+        """Chat with a family member via Telegram about their loved one(s)."""
+        context_parts = [
+            f"Hablando con: {contact_name} ({relationship})",
+            f"Fecha y hora: {datetime.now().strftime('%A %d de %B de %Y, %H:%M')}",
+        ]
+
+        user_names = []
+        if db and user_ids:
+            for uid in user_ids:
+                user = db.get_user(uid)
+                if not user:
+                    continue
+                uname = user["real_name"]
+                user_names.append(uname)
+                context_parts.append(f"\n--- Informacion de {uname} ---")
+
+                meds = db.get_medications(uid)
+                if meds:
+                    context_parts.append(f"Medicamentos de {uname}:")
+                    for m in meds:
+                        context_parts.append(f"  - {m['name']}: {m['dosage']}, horario: {m['schedule']}")
+
+                today = datetime.now().strftime("%Y-%m-%d")
+                med_log = db.get_medication_log(uid, date=today)
+                if med_log:
+                    taken = [f"{ml['med_name']} ({ml['taken_at'][-5:]})" for ml in med_log]
+                    context_parts.append(f"Medicamentos tomados hoy: {', '.join(taken)}")
+
+                reminders = db.get_pending_reminders(uid)
+                if reminders:
+                    rem_list = ", ".join(f"{r['text']} a las {r['remind_at']}" for r in reminders)
+                    context_parts.append(f"Recordatorios: {rem_list}")
+
+                memories = db.get_memories(uid, limit=20)
+                if memories:
+                    context_parts.append(f"Memorias de {uname}:")
+                    for mem in memories:
+                        context_parts.append(f"  - [{mem['category']}] {mem['content']}")
+
+                contacts = db.get_contacts(uid)
+                if contacts:
+                    contact_list = ", ".join(f"{c['name']} ({c['relationship']})" for c in contacts)
+                    context_parts.append(f"Contactos: {contact_list}")
+
+        if chat_history:
+            context_parts.append("\nConversacion reciente en Telegram:")
+            for msg in chat_history:
+                role = contact_name if msg["role"] == "user" else self.assistant_name
+                context_parts.append(f"  {role}: {msg['content'][:300]}")
+
+        context = "\n".join(context_parts)
+        users_str = " y ".join(user_names) if user_names else "los usuarios"
+
+        system = (
+            f"Eres {self.assistant_name}, asistente virtual de la familia. "
+            f"Estas hablando por Telegram con {contact_name}, quien es {relationship} de {users_str}.\n\n"
+            f"Tu rol es:\n"
+            f"- Informar sobre el estado, medicamentos, recordatorios y bienestar de {users_str}\n"
+            f"- Recibir mensajes para entregar a {users_str} cuando hablen contigo por voz\n"
+            f"- Ser calida, concisa y tranquilizadora\n\n"
+            f"Si {contact_name} quiere enviar un mensaje a alguno de los usuarios, usa:\n"
+            f"[ACCION:MENSAJE_PENDIENTE:el mensaje a entregar]\n\n"
+            f"Responde siempre en espanol mexicano, de forma breve y util.\n\n"
+            f"--- Contexto ---\n{context}"
+        )
+
+        try:
+            if self.provider == "claude":
+                full_text = self._chat_claude(system, text)
+            elif self.provider == "openai":
+                full_text = self._chat_openai(system, text)
+            else:
+                return "Proveedor LLM no configurado.", []
+
+            clean_text, actions = parse_actions(full_text)
+            if actions:
+                log.info("Telegram acciones: %s", [a["type"] for a in actions])
+            return clean_text, actions
+
+        except Exception as e:
+            log.error("Error LLM telegram: %s", e)
+            return "Disculpa, tuve un problema. Intenta de nuevo.", []
