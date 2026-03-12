@@ -111,6 +111,20 @@ class TelegramBot:
         except Exception:
             pass
 
+        # Set bot commands menu
+        try:
+            httpx.post(f"{self.base_url}/setMyCommands", json={
+                "commands": [
+                    {"command": "estado", "description": "Resumen del dia"},
+                    {"command": "medicamentos", "description": "Medicamentos y tomas de hoy"},
+                    {"command": "recordatorios", "description": "Recordatorios pendientes"},
+                    {"command": "ayuda", "description": "Comandos disponibles"},
+                ]
+            }, timeout=5.0)
+            log.info("Comandos de Telegram configurados")
+        except Exception:
+            pass
+
         self._polling = True
         self._poll_thread = threading.Thread(target=self._poll_loop, daemon=True)
         self._poll_thread.start()
@@ -191,22 +205,33 @@ class TelegramBot:
 
     # --- Contact lookup ---
     def _get_contact_info(self, chat_id: int) -> dict | None:
-        """Find registered contact by chat_id. Returns {name, relationship, user_ids}."""
+        """Find registered contact by chat_id. Checks DB contacts and config contacts."""
         if not self.db:
             return None
 
+        # Check DB contacts first
         contacts = self.db.get_contacts_by_chat_id(chat_id)
-        if not contacts:
-            return None
+        if contacts:
+            first = contacts[0]
+            user_ids = list({c["user_id"] for c in contacts})
+            return {
+                "name": first["name"],
+                "relationship": first["relationship"],
+                "user_ids": user_ids,
+            }
 
-        # All rows share name/relationship, collect user_ids
-        first = contacts[0]
-        user_ids = list({c["user_id"] for c in contacts})
-        return {
-            "name": first["name"],
-            "relationship": first["relationship"],
-            "user_ids": user_ids,
-        }
+        # Fallback: check config contacts (name -> chat_id mapping)
+        for name, cid in self.contacts.items():
+            if int(cid) == chat_id:
+                # Config contact — link to all users
+                all_users = [u["id"] for u in self.db.get_users()]
+                return {
+                    "name": name,
+                    "relationship": "familiar",
+                    "user_ids": all_users,
+                }
+
+        return None
 
     def _require_registered(self, chat_id: int) -> dict | None:
         """Check if chat_id is a registered contact. Send rejection if not."""
