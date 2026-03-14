@@ -71,11 +71,21 @@ class LLM:
         else:
             log.error("Proveedor LLM desconocido: %s", self.provider)
 
-    def build_context(self, user_name: str, db=None, user_id: str | None = None) -> str:
-        """Build context string with user info, medications, reminders, memories."""
+    def build_context(self, user_name: str, db=None, user_id: str | None = None,
+                       weather=None) -> str:
+        """Build context string with user info, medications, reminders, memories, weather."""
         parts = [f"Usuario actual: {user_name}"]
         now = datetime.now()
         parts.append(f"Fecha y hora: {now.strftime('%A %d de %B de %Y, %H:%M')}")
+
+        # Weather
+        if weather:
+            w = weather.data if hasattr(weather, 'data') else weather
+            if w:
+                parts.append(f"Clima en {w.get('city', '')}: {w.get('temp')}°C, "
+                             f"{w.get('description', '')}, "
+                             f"sensacion termica {w.get('feels_like')}°C, "
+                             f"humedad {w.get('humidity')}%")
 
         if db and user_id:
             # Medicamentos (detallado)
@@ -140,9 +150,10 @@ class LLM:
         return "\n".join(parts)
 
     def chat(self, user_text: str, user_name: str = "Usuario",
-             db=None, user_id: str | None = None) -> tuple[str, list[dict]]:
+             db=None, user_id: str | None = None,
+             weather=None) -> tuple[str, list[dict]]:
         """Send message to LLM, return (response_text, actions)."""
-        context = self.build_context(user_name, db, user_id)
+        context = self.build_context(user_name, db, user_id, weather=weather)
         system = f"{self.system_prompt}\n\n--- Contexto ---\n{context}"
 
         try:

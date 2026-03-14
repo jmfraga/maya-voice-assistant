@@ -520,7 +520,8 @@ def _extract_medication(llm, raw_text: str) -> dict | None:
 
 def run_onboarding(user_id: str, user_name: str, config: dict, db,
                     stt, tts, llm, display, audio_cfg: dict,
-                    speaker: "SpeakerID | None" = None):
+                    speaker: "SpeakerID | None" = None,
+                    weather=None):
     """Guided onboarding: 8-step introduction for first-time users."""
     log.info("=== Onboarding para %s ===", user_name)
 
@@ -697,7 +698,7 @@ def run_onboarding(user_id: str, user_name: str, config: dict, db,
     demo_text = _listen(initial_wait=12.0)
     if demo_text:
         display.set_status("Pensando...", "#f0a500")
-        response_text, actions = llm.chat(demo_text, nickname, db, user_id)
+        response_text, actions = llm.chat(demo_text, nickname, db, user_id, weather=weather)
         if actions:
             execute_actions(actions, user_id, db, None, llm=llm)
         display.set_status("Hablando...", "#e94560")
@@ -878,7 +879,8 @@ def main():
                 uname = db_user["real_name"] if db_user else uid
                 try:
                     run_onboarding(uid, uname, config, db, stt, tts, llm,
-                                   display, audio_cfg, speaker=speaker)
+                                   display, audio_cfg, speaker=speaker,
+                                   weather=weather)
                 except Exception as e:
                     log.error("Error en onboarding: %s", e, exc_info=True)
                     display.active_user_id = None
@@ -974,7 +976,7 @@ def main():
 
             # g. Process with LLM
             display.set_status("Pensando...", "#f0a500")
-            response_text, actions = llm.chat(text, user_name, db, user_id)
+            response_text, actions = llm.chat(text, user_name, db, user_id, weather=weather)
 
             # h. Execute actions
             if actions:
@@ -1034,7 +1036,7 @@ def main():
                     db.save_conversation(user_id, "user", fw_text)
 
                 display.set_status("Pensando...", "#f0a500")
-                fw_response, fw_actions = llm.chat(fw_text, user_name, db, user_id)
+                fw_response, fw_actions = llm.chat(fw_text, user_name, db, user_id, weather=weather)
 
                 if fw_actions:
                     fw_results = execute_actions(fw_actions, user_id or "unknown", db, telegram, llm=llm)
