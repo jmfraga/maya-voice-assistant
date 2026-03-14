@@ -1290,8 +1290,10 @@ def main():
                         search_answer = r[len("__SEARCH__:"):]
                     elif r.startswith("__RADIO_ON__:"):
                         display.set_radio(r[len("__RADIO_ON__:"):])
+                        radio_was_playing = radio.current_station
                     elif r == "__RADIO_OFF__":
                         display.set_radio(None)
+                        radio_was_playing = None
                     else:
                         log.info("Accion: %s", r)
 
@@ -1370,8 +1372,10 @@ def main():
                             fw_search = r[len("__SEARCH__:"):]
                         elif r.startswith("__RADIO_ON__:"):
                             display.set_radio(r[len("__RADIO_ON__:"):])
+                            radio_was_playing = radio.current_station
                         elif r == "__RADIO_OFF__":
                             display.set_radio(None)
+                            radio_was_playing = None
                         else:
                             log.info("Accion follow-up ronda %d: %s", followup_round, r)
 
