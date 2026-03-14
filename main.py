@@ -419,6 +419,7 @@ def _check_medication_reminders(db: Database, tts: TTS, display: Display):
                         if audio_path:
                             play_audio(audio_path)
                             os.unlink(audio_path)
+                        time.sleep(1)
 
 
 def generate_weekly_report(db: Database, user_id: str) -> str:
@@ -532,6 +533,7 @@ def _check_user_activity(db: Database, tts: TTS, display: Display):
                     play_audio(audio_path)
                     os.unlink(audio_path)
                 db.save_conversation(user_id, "assistant", f"__WELLNESS__ {msg}")
+                time.sleep(2)  # pause between users
 
 
 def reminder_thread(db: Database, tts: TTS, display: Display, telegram=None):
