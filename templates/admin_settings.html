@@ -3,9 +3,27 @@
 {% block content %}
 <form method="post" action="/settings/save">
 
+<!-- Synapse (M4) -->
+<div class="card">
+    <h2>Synapse (Mac Mini M4)</h2>
+    <p style="color:#8899aa;font-size:0.85em;margin-bottom:12px">
+        Servidor AI local. Si esta configurado, puede usarse como proveedor principal para LLM, STT y TTS con fallback a la nube.
+    </p>
+    <div class="form-row">
+        <div class="form-group">
+            <label>Base URL</label>
+            <input name="synapse_base_url" value="{{ config.get('synapse', {}).get('base_url', '') }}" placeholder="http://100.72.169.113:8800">
+        </div>
+        <div class="form-group">
+            <label>API Key</label>
+            <input name="synapse_api_key" type="password" placeholder="{{ keys.synapse_key or 'syn-...' }}">
+        </div>
+    </div>
+</div>
+
 <!-- API Keys -->
 <div class="card">
-    <h2>API Keys</h2>
+    <h2>API Keys (Nube)</h2>
     <p style="color:#8899aa;font-size:0.85em;margin-bottom:12px">
         Deja en blanco para mantener el valor actual. Los valores actuales se muestran enmascarados.
     </p>
@@ -58,16 +76,35 @@
         <div class="form-group">
             <label>Proveedor principal</label>
             <select name="llm_provider">
+                <option value="synapse" {% if config.llm.primary == 'synapse' %}selected{% endif %}>Synapse (M4 Smart Route)</option>
                 <option value="claude" {% if config.llm.primary == 'claude' %}selected{% endif %}>Claude (Anthropic)</option>
                 <option value="openai" {% if config.llm.primary == 'openai' %}selected{% endif %}>OpenAI (GPT)</option>
             </select>
         </div>
         <div class="form-group">
+            <label>Fallback</label>
+            <select name="llm_fallback">
+                <option value="" {% if not config.llm.get('fallback') %}selected{% endif %}>Ninguno</option>
+                <option value="claude" {% if config.llm.get('fallback') == 'claude' %}selected{% endif %}>Claude</option>
+                <option value="openai" {% if config.llm.get('fallback') == 'openai' %}selected{% endif %}>OpenAI</option>
+                <option value="synapse" {% if config.llm.get('fallback') == 'synapse' %}selected{% endif %}>Synapse</option>
+            </select>
+        </div>
+        <div class="form-group">
             <label>Max tokens respuesta</label>
-            <input name="llm_max_tokens" type="number" value="{{ config.llm.claude.max_tokens or 500 }}" min="100" max="2000">
+            <input name="llm_max_tokens" type="number" value="{{ config.llm.get('synapse', {}).get('max_tokens') or config.llm.claude.max_tokens or 500 }}" min="100" max="2000">
         </div>
     </div>
     <div class="form-row">
+        <div class="form-group">
+            <label>Modelo Synapse</label>
+            {% set syn_llm_model = config.llm.get('synapse', {}).get('model', 'maya-auto') %}
+            <select name="synapse_llm_model">
+                <option value="maya-auto" {% if syn_llm_model == 'maya-auto' %}selected{% endif %}>maya-auto (Smart Route)</option>
+                <option value="qwen3.5-35b-a3b" {% if syn_llm_model == 'qwen3.5-35b-a3b' %}selected{% endif %}>Qwen 3.5 35B</option>
+                <option value="gpt-oss-20b" {% if syn_llm_model == 'gpt-oss-20b' %}selected{% endif %}>GPT-OSS 20B</option>
+            </select>
+        </div>
         <div class="form-group">
             <label>Modelo Claude</label>
             <select name="claude_model">
@@ -94,8 +131,18 @@
         <div class="form-group">
             <label>Metodo principal</label>
             <select name="stt_primary">
-                <option value="openai_api" {% if config.stt.primary == 'openai_api' %}selected{% endif %}>OpenAI Whisper API (rapido, en la nube)</option>
-                <option value="whisper_cpp" {% if config.stt.primary == 'whisper_cpp' %}selected{% endif %}>whisper.cpp (local, lento en Pi)</option>
+                <option value="synapse" {% if config.stt.primary == 'synapse' %}selected{% endif %}>Synapse Whisper (M4, local)</option>
+                <option value="openai_api" {% if config.stt.primary == 'openai_api' %}selected{% endif %}>OpenAI Whisper API (nube)</option>
+                <option value="whisper_cpp" {% if config.stt.primary == 'whisper_cpp' %}selected{% endif %}>whisper.cpp (local Pi, lento)</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Fallback</label>
+            <select name="stt_fallback">
+                <option value="" {% if not config.stt.get('fallback') %}selected{% endif %}>Ninguno</option>
+                <option value="openai_api" {% if config.stt.get('fallback') == 'openai_api' %}selected{% endif %}>OpenAI Whisper API</option>
+                <option value="synapse" {% if config.stt.get('fallback') == 'synapse' %}selected{% endif %}>Synapse</option>
+                <option value="whisper_cpp" {% if config.stt.get('fallback') == 'whisper_cpp' %}selected{% endif %}>whisper.cpp</option>
             </select>
         </div>
     </div>
@@ -108,9 +155,32 @@
         <div class="form-group">
             <label>Metodo principal</label>
             <select name="tts_primary">
-                <option value="openai" {% if config.tts.primary == 'openai' %}selected{% endif %}>OpenAI TTS (en la nube)</option>
-                <option value="elevenlabs" {% if config.tts.primary == 'elevenlabs' %}selected{% endif %}>ElevenLabs (alta calidad, en la nube)</option>
-                <option value="piper" {% if config.tts.primary == 'piper' %}selected{% endif %}>Piper (local, gratis)</option>
+                <option value="synapse" {% if config.tts.primary == 'synapse' %}selected{% endif %}>Synapse (M4, local)</option>
+                <option value="openai" {% if config.tts.primary == 'openai' %}selected{% endif %}>OpenAI TTS (nube)</option>
+                <option value="elevenlabs" {% if config.tts.primary == 'elevenlabs' %}selected{% endif %}>ElevenLabs (alta calidad, nube)</option>
+                <option value="piper" {% if config.tts.primary == 'piper' %}selected{% endif %}>Piper (local Pi, gratis)</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Fallback</label>
+            <select name="tts_fallback">
+                <option value="" {% if not config.tts.get('fallback') %}selected{% endif %}>Ninguno</option>
+                <option value="openai" {% if config.tts.get('fallback') == 'openai' %}selected{% endif %}>OpenAI TTS</option>
+                <option value="synapse" {% if config.tts.get('fallback') == 'synapse' %}selected{% endif %}>Synapse</option>
+                <option value="elevenlabs" {% if config.tts.get('fallback') == 'elevenlabs' %}selected{% endif %}>ElevenLabs</option>
+                <option value="piper" {% if config.tts.get('fallback') == 'piper' %}selected{% endif %}>Piper</option>
+            </select>
+        </div>
+    </div>
+    <div class="form-row">
+        <div class="form-group">
+            <label>Voz Synapse</label>
+            {% set svoice = config.tts.get('synapse', {}).get('voice', 'paulina') %}
+            <select name="synapse_tts_voice">
+                <option value="paulina" {% if svoice == 'paulina' %}selected{% endif %}>Paulina (femenina, mexicana)</option>
+                <option value="monica" {% if svoice == 'monica' %}selected{% endif %}>Monica (femenina)</option>
+                <option value="jorge" {% if svoice == 'jorge' %}selected{% endif %}>Jorge (masculina)</option>
+                <option value="juan" {% if svoice == 'juan' %}selected{% endif %}>Juan (masculina)</option>
             </select>
         </div>
         <div class="form-group">

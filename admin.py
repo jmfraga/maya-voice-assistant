@@ -511,6 +511,7 @@ def create_app(db=None, telegram_bot=None) -> Flask:
             "openai_llm_key": _mask(cfg.get("llm", {}).get("openai", {}).get("api_key", "")),
             "telegram_token": _mask(cfg.get("telegram", {}).get("bot_token", "")),
             "weather_key": _mask(cfg.get("weather", {}).get("api_key", "")),
+            "synapse_key": _mask(cfg.get("synapse", {}).get("api_key", "")),
         }
         ppn_file = cfg.get("wake_word", {}).get("keyword_path", "")
         ppn_path = os.path.join(BASE_DIR, ppn_file) if ppn_file else ""
@@ -602,9 +603,30 @@ def create_app(db=None, telegram_bot=None) -> Flask:
         _update_key("openai_llm_key", ["llm", "openai", "api_key"])
         _update_key("telegram_token", ["telegram", "bot_token"])
 
+        # --- Synapse (shared config for STT/TTS/LLM) ---
+        synapse_base_url = request.form.get("synapse_base_url", "").strip()
+        if synapse_base_url:
+            cfg.setdefault("synapse", {})["base_url"] = synapse_base_url
+        _update_key("synapse_api_key", ["synapse", "api_key"])
+
         # --- LLM selection ---
         llm_provider = request.form.get("llm_provider", "claude")
         cfg.setdefault("llm", {})["primary"] = llm_provider
+
+        llm_fallback = request.form.get("llm_fallback", "").strip()
+        cfg.setdefault("llm", {})["fallback"] = llm_fallback
+
+        # Synapse LLM model
+        synapse_llm_model = request.form.get("synapse_llm_model", "").strip()
+        if synapse_llm_model:
+            cfg.setdefault("llm", {}).setdefault("synapse", {})["model"] = synapse_llm_model
+            # Copy shared synapse config into llm.synapse
+            syn_global = cfg.get("synapse", {})
+            llm_syn = cfg["llm"]["synapse"]
+            if "base_url" not in llm_syn and syn_global.get("base_url"):
+                llm_syn["base_url"] = syn_global["base_url"]
+            if "api_key" not in llm_syn and syn_global.get("api_key"):
+                llm_syn["api_key"] = syn_global["api_key"]
 
         # Claude model
         claude_model = request.form.get("claude_model", "").strip()
@@ -622,14 +644,39 @@ def create_app(db=None, telegram_bot=None) -> Flask:
             mt = int(max_tokens)
             cfg.setdefault("llm", {}).setdefault("claude", {})["max_tokens"] = mt
             cfg.setdefault("llm", {}).setdefault("openai", {})["max_tokens"] = mt
+            cfg.setdefault("llm", {}).setdefault("synapse", {})["max_tokens"] = mt
 
         # --- STT selection ---
         stt_primary = request.form.get("stt_primary", "openai_api")
         cfg.setdefault("stt", {})["primary"] = stt_primary
 
+        stt_fallback = request.form.get("stt_fallback", "").strip()
+        cfg.setdefault("stt", {})["fallback"] = stt_fallback
+
+        # Copy shared synapse config into stt.synapse
+        syn_global = cfg.get("synapse", {})
+        if syn_global.get("base_url"):
+            stt_syn = cfg.setdefault("stt", {}).setdefault("synapse", {})
+            stt_syn["base_url"] = syn_global["base_url"]
+            if syn_global.get("api_key"):
+                stt_syn["api_key"] = syn_global["api_key"]
+
         # --- TTS selection ---
         tts_primary = request.form.get("tts_primary", "elevenlabs")
         cfg.setdefault("tts", {})["primary"] = tts_primary
+
+        tts_fallback = request.form.get("tts_fallback", "").strip()
+        cfg.setdefault("tts", {})["fallback"] = tts_fallback
+
+        # Synapse TTS voice
+        synapse_tts_voice = request.form.get("synapse_tts_voice", "").strip()
+        if synapse_tts_voice:
+            tts_syn = cfg.setdefault("tts", {}).setdefault("synapse", {})
+            tts_syn["voice"] = synapse_tts_voice
+            if syn_global.get("base_url"):
+                tts_syn["base_url"] = syn_global["base_url"]
+            if syn_global.get("api_key"):
+                tts_syn["api_key"] = syn_global["api_key"]
 
         # OpenAI voice
         openai_voice = request.form.get("openai_voice", "").strip()
