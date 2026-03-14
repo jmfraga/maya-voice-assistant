@@ -299,6 +299,49 @@ class Database:
                 return True
             return False
 
+    def is_medication_taken_today(self, med_id: int, user_id: str,
+                                   time_slot: str | None = None) -> bool:
+        """Check if a medication was taken today, optionally within ±2 hours of time_slot (HH:MM)."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        with self._conn() as conn:
+            if time_slot:
+                # Parse time_slot to get ±2h window
+                try:
+                    slot_h, slot_m = int(time_slot.split(":")[0]), int(time_slot.split(":")[1])
+                    low_h = (slot_h - 2) % 24
+                    high_h = (slot_h + 2) % 24
+                    low_time = f"{today} {low_h:02d}:{slot_m:02d}:00"
+                    high_time = f"{today} {high_h:02d}:{slot_m:02d}:00"
+                    if low_h <= high_h:
+                        row = conn.execute(
+                            "SELECT 1 FROM medication_log "
+                            "WHERE medication_id = ? AND user_id = ? "
+                            "AND taken_at >= ? AND taken_at <= ?",
+                            (med_id, user_id, low_time, high_time),
+                        ).fetchone()
+                    else:
+                        # Wraps around midnight
+                        row = conn.execute(
+                            "SELECT 1 FROM medication_log "
+                            "WHERE medication_id = ? AND user_id = ? "
+                            "AND DATE(taken_at) = ? "
+                            "AND (taken_at >= ? OR taken_at <= ?)",
+                            (med_id, user_id, today, low_time, high_time),
+                        ).fetchone()
+                except (ValueError, IndexError):
+                    row = conn.execute(
+                        "SELECT 1 FROM medication_log "
+                        "WHERE medication_id = ? AND user_id = ? AND DATE(taken_at) = ?",
+                        (med_id, user_id, today),
+                    ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT 1 FROM medication_log "
+                    "WHERE medication_id = ? AND user_id = ? AND DATE(taken_at) = ?",
+                    (med_id, user_id, today),
+                ).fetchone()
+            return row is not None
+
     def get_medication_log(self, user_id: str, date: str | None = None) -> list[dict]:
         with self._conn() as conn:
             q = """SELECT ml.*, m.name as med_name, m.dosage

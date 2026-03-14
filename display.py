@@ -84,6 +84,10 @@ class Display:
         self._current_screen = "main"
         self.active_user_id = None  # set when user taps their button to talk
         self._photo_images = {}  # keep references to prevent GC
+        self._listening_canvas = None
+        self._listening_active = False
+        self._listening_after_id = None
+        self._listening_tick = 0
 
         # Users: prefer DB names (editable via admin), fallback to config
         self._users = []
@@ -216,6 +220,14 @@ class Display:
             tk.Label(btn_frame, text="Sin usuarios configurados",
                      font=("Helvetica", self.fs(16)), fg=MUTED, bg=BG).place(
                 relx=0.5, rely=0.5, anchor="center")
+        elif num_users <= 2:
+            # Larger, centered buttons for 1-2 users
+            btn_w = min(self.x(350), (W - self.x(40) - (num_users - 1) * self.x(20)) // num_users)
+            total_w = num_users * btn_w + (num_users - 1) * self.x(20)
+            start_x = (W - total_w) // 2
+            for i, user in enumerate(self._users):
+                bx = start_x + i * (btn_w + self.x(20))
+                self._create_user_button(btn_frame, user, bx, self.y(5), btn_w, self.y(225))
         else:
             btn_w = (W - self.x(40) - (num_users - 1) * self.x(15)) // num_users
             for i, user in enumerate(self._users):
@@ -1591,6 +1603,69 @@ class Display:
 
     # ===== QUEUE PROCESSING =====
 
+    # ===== LISTENING ANIMATION =====
+
+    def _start_listening_animation(self):
+        """Create and show the listening equalizer overlay on the conversation screen."""
+        if self._listening_canvas:
+            self._stop_listening_animation()
+        conv = self._screens.get("conversation")
+        if not conv:
+            return
+        # Overlay on the transcript area
+        c_w = W - self.x(40)
+        c_h = self.y(100)
+        self._listening_canvas = tk.Canvas(
+            conv, bg=CARD_BG, highlightthickness=0, width=c_w, height=c_h,
+        )
+        self._listening_canvas.place(x=self.x(20), y=self.y(95), width=c_w, height=c_h)
+        self._listening_active = True
+        self._listening_tick = 0
+        self._animate_listening()
+
+    def _animate_listening(self):
+        """Draw 7 equalizer bars with sinusoidal animation every 80ms."""
+        import math
+        if not self._listening_active or not self._listening_canvas:
+            return
+        canvas = self._listening_canvas
+        canvas.delete("bars")
+        c_w = int(canvas.cget("width"))
+        c_h = int(canvas.cget("height"))
+        n_bars = 7
+        bar_w = max(8, c_w // (n_bars * 2 + 1))
+        gap = bar_w
+        total = n_bars * bar_w + (n_bars - 1) * gap
+        x0 = (c_w - total) // 2
+        max_h = c_h - self.y(20)
+        min_h = self.y(10)
+
+        for i in range(n_bars):
+            phase = self._listening_tick * 0.15 + i * 0.9
+            h = min_h + (max_h - min_h) * (0.5 + 0.5 * math.sin(phase))
+            bx = x0 + i * (bar_w + gap)
+            by = c_h - self.y(10)
+            canvas.create_rectangle(
+                bx, by - h, bx + bar_w, by,
+                fill=ACCENT, outline="", tags="bars",
+            )
+
+        self._listening_tick += 1
+        self._listening_after_id = canvas.after(80, self._animate_listening)
+
+    def _stop_listening_animation(self):
+        """Remove the listening animation overlay."""
+        self._listening_active = False
+        if self._listening_after_id and self._listening_canvas:
+            try:
+                self._listening_canvas.after_cancel(self._listening_after_id)
+            except Exception:
+                pass
+        self._listening_after_id = None
+        if self._listening_canvas:
+            self._listening_canvas.destroy()
+            self._listening_canvas = None
+
     def _process_queue(self):
         if not self._running:
             return
@@ -1671,6 +1746,12 @@ class Display:
             if hasattr(self, "_wifi_dialog_status"):
                 self._wifi_dialog_status.config(text=msg["text"])
 
+        elif kind == "listening":
+            if msg.get("active"):
+                self._start_listening_animation()
+            else:
+                self._stop_listening_animation()
+
         elif kind == "talk_btn":
             if hasattr(self, "_conv_talk_btn"):
                 if msg.get("enabled", True):
@@ -1707,6 +1788,9 @@ class Display:
 
     def set_reminders(self, text: str):
         self.queue.put({"type": "reminders", "text": text})
+
+    def set_listening(self, active: bool):
+        self.queue.put({"type": "listening", "active": active})
 
     def enable_talk_btn(self, enabled: bool = True):
         self.queue.put({"type": "talk_btn", "enabled": enabled})

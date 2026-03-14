@@ -152,6 +152,63 @@ def resolve_relative_time(time_str: str) -> str:
     return time_str
 
 
+_MEAL_TIMES = {"desayuno": "08:00", "comida": "14:00", "cena": "20:00",
+               "almuerzo": "14:00", "merienda": "17:00"}
+
+
+def parse_medication_schedule(schedule: str) -> list[str]:
+    """Parse a medication schedule string into a list of HH:MM times.
+
+    Supports:
+      - Explicit times: "08:00, 14:00, 20:00"
+      - Intervals: "cada 8 horas" (anchored at 08:00)
+      - Meal names: "desayuno, comida, cena"
+      - Frequency: "dos veces al dia" / "tres veces al dia"
+    """
+    if not schedule:
+        return []
+
+    schedule = schedule.strip().lower()
+
+    # Explicit times: "08:00, 14:00, 20:00" or "8:00 y 20:00"
+    explicit = _re.findall(r"\b(\d{1,2}:\d{2})\b", schedule)
+    if explicit:
+        return sorted(set(t.zfill(5) for t in explicit))
+
+    # Interval: "cada X horas"
+    m = _re.search(r"cada\s+(\d+)\s*hora", schedule)
+    if m:
+        interval = int(m.group(1))
+        if 1 <= interval <= 24:
+            times = []
+            h = 8  # anchor
+            for _ in range(24 // interval):
+                times.append(f"{h:02d}:00")
+                h = (h + interval) % 24
+            return sorted(set(times))
+
+    # Meal names
+    found_meals = [_MEAL_TIMES[k] for k in _MEAL_TIMES if k in schedule]
+    if found_meals:
+        return sorted(set(found_meals))
+
+    # Frequency: "X veces al dia"
+    freq_map = {"una": 1, "dos": 2, "tres": 3, "cuatro": 4, "1": 1, "2": 2, "3": 3, "4": 4}
+    m = _re.search(r"(\w+)\s+vec(?:es|e)\s+al\s+d[ií]a", schedule)
+    if m:
+        n = freq_map.get(m.group(1), 0)
+        if n == 1:
+            return ["08:00"]
+        elif n == 2:
+            return ["08:00", "20:00"]
+        elif n == 3:
+            return ["08:00", "14:00", "20:00"]
+        elif n == 4:
+            return ["08:00", "12:00", "16:00", "20:00"]
+
+    return []
+
+
 def _handle_treatment_query(action: dict, user_id: str, db: Database,
                             telegram: TelegramBot, results: list[str]):
     """Handle CONSULTA_TRATAMIENTO action: lookup dose, log measurement, send alerts."""
@@ -319,8 +376,41 @@ def execute_actions(actions: list[dict], user_id: str, db: Database,
     return results
 
 
+def _check_medication_reminders(db: Database, tts: TTS, display: Display):
+    """Check all users' medication schedules and announce due medications."""
+    now = datetime.now()
+    now_minutes = now.hour * 60 + now.minute
+
+    for user in db.get_users():
+        user_id = user["id"]
+        user_name = user["real_name"]
+        meds = db.get_medications(user_id)
+        for med in meds:
+            times = parse_medication_schedule(med.get("schedule", ""))
+            for t in times:
+                try:
+                    h, m = int(t.split(":")[0]), int(t.split(":")[1])
+                except (ValueError, IndexError):
+                    continue
+                slot_minutes = h * 60 + m
+                diff = now_minutes - slot_minutes
+                # 0-15 minutes after scheduled time
+                if 0 <= diff <= 15:
+                    if not db.is_medication_taken_today(med["id"], user_id, t):
+                        msg = f"{user_name}, ya es hora de su {med['name']}"
+                        if med.get("dosage"):
+                            msg += f", {med['dosage']}"
+                        log.info("Recordatorio medicamento: %s", msg)
+                        display.set_status("Medicamento", "#e94560")
+                        display.set_response(msg)
+                        audio_path = tts.speak(msg)
+                        if audio_path:
+                            play_audio(audio_path)
+                            os.unlink(audio_path)
+
+
 def reminder_thread(db: Database, tts: TTS, display: Display):
-    """Background thread that checks for due reminders every 30s."""
+    """Background thread that checks for due reminders and medications every 30s."""
     while running:
         try:
             due = db.get_due_reminders()
@@ -336,6 +426,11 @@ def reminder_thread(db: Database, tts: TTS, display: Display):
                 db.mark_reminder_triggered(rem["id"])
         except Exception as e:
             log.error("Error en reminder thread: %s", e)
+
+        try:
+            _check_medication_reminders(db, tts, display)
+        except Exception as e:
+            log.error("Error en medication reminders: %s", e)
 
         # Sleep in small increments so we can exit quickly
         for _ in range(30):
@@ -781,6 +876,10 @@ def main():
     tts = TTS(config.get("tts", {}))
     llm = LLM(config.get("llm", {}), config.get("assistant", {}))
 
+    # Set STT initial_prompt with user names for better transcription
+    user_names = [ucfg.get("real_name", uid) for uid, ucfg in config.get("users", {}).items()]
+    stt.set_user_names(user_names)
+
     # Speaker ID
     speaker = SpeakerID(
         config.get("speaker_id", {}),
@@ -922,6 +1021,7 @@ def main():
                 play_audio(ack_sound)
 
             display.set_status("Escuchando...", "#e94560")
+            display.set_listening(True)
 
             # c. Record until silence
             audio = record_until_silence(
@@ -930,6 +1030,7 @@ def main():
                 silence_duration=audio_cfg.get("silence_duration", 1.5),
                 max_seconds=audio_cfg.get("max_record_seconds", 30),
             )
+            display.set_listening(False)
 
             if audio is None:
                 display.set_status("No escuche nada", "#8899aa")
@@ -1034,6 +1135,7 @@ def main():
                 log.info("Esperando follow-up (ronda %d/%d)...", followup_round, max_rounds)
                 display.set_status("Escuchando...", "#e94560")
                 display.enable_talk_btn(False)
+                display.set_listening(True)
 
                 followup_audio = record_until_silence(
                     sample_rate=audio_cfg.get("sample_rate", 16000),
@@ -1042,6 +1144,7 @@ def main():
                     max_seconds=audio_cfg.get("max_record_seconds", 30),
                     initial_wait=followup_wait,
                 )
+                display.set_listening(False)
 
                 if followup_audio is None:
                     log.info("Sin follow-up en ronda %d", followup_round)

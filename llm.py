@@ -6,6 +6,17 @@ from datetime import datetime
 
 log = logging.getLogger("maya.llm")
 
+_DAYS_ES = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"]
+_MONTHS_ES = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+              "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+
+
+def _fecha_es(dt: datetime) -> str:
+    """Format datetime as 'Sabado 14 de Marzo de 2026, 15:30' in Spanish."""
+    day_name = _DAYS_ES[dt.weekday()]
+    month_name = _MONTHS_ES[dt.month]
+    return f"{day_name} {dt.day} de {month_name} de {dt.year}, {dt.strftime('%H:%M')}"
+
 ACTION_PATTERN = re.compile(r"\[ACCION:([^\]]+)\]")
 
 
@@ -104,7 +115,7 @@ class LLM:
         """Build context string with user info, medications, reminders, memories, weather."""
         parts = [f"Usuario actual: {user_name}"]
         now = datetime.now()
-        parts.append(f"Fecha y hora: {now.strftime('%A %d de %B de %Y, %H:%M')}")
+        parts.append(f"Fecha y hora: {_fecha_es(now)}")
 
         # Weather
         if weather:
@@ -275,7 +286,7 @@ class LLM:
         """Chat with a family member via Telegram about their loved one(s)."""
         context_parts = [
             f"Hablando con: {contact_name} ({relationship})",
-            f"Fecha y hora: {datetime.now().strftime('%A %d de %B de %Y, %H:%M')}",
+            f"Fecha y hora: {_fecha_es(datetime.now())}",
         ]
 
         user_names = []

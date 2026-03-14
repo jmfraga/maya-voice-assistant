@@ -15,6 +15,13 @@ class STT:
         self.openai_cfg = config.get("openai_api", {})
         self.whisper_cpp_cfg = config.get("whisper_cpp", {})
         self.synapse_cfg = config.get("synapse", {})
+        self.initial_prompt = ""
+
+    def set_user_names(self, names: list[str]):
+        """Set initial_prompt with user names to improve transcription accuracy."""
+        if names:
+            self.initial_prompt = "Nombres: " + ", ".join(names) + "."
+            log.info("STT initial_prompt: %s", self.initial_prompt)
 
     def transcribe(self, wav_path: str) -> str | None:
         """Transcribe audio file. Try primary, then fallback chain."""
@@ -54,15 +61,18 @@ class STT:
 
         try:
             with open(wav_path, "rb") as f:
+                data = {
+                    "model": self.synapse_cfg.get("model", "whisper-1"),
+                    "language": "es",
+                    "response_format": "text",
+                }
+                if self.initial_prompt:
+                    data["prompt"] = self.initial_prompt
                 response = httpx.post(
                     f"{base_url}/v1/audio/transcriptions",
                     headers={"Authorization": f"Bearer {api_key}"},
                     files={"file": ("audio.wav", f, "audio/wav")},
-                    data={
-                        "model": self.synapse_cfg.get("model", "whisper-1"),
-                        "language": "es",
-                        "response_format": "text",
-                    },
+                    data=data,
                     timeout=30.0,
                 )
                 response.raise_for_status()
@@ -80,15 +90,18 @@ class STT:
 
         try:
             with open(wav_path, "rb") as f:
+                data = {
+                    "model": self.openai_cfg.get("model", "whisper-1"),
+                    "language": self.openai_cfg.get("language", "es"),
+                    "response_format": "text",
+                }
+                if self.initial_prompt:
+                    data["prompt"] = self.initial_prompt
                 response = httpx.post(
                     "https://api.openai.com/v1/audio/transcriptions",
                     headers={"Authorization": f"Bearer {api_key}"},
                     files={"file": ("audio.wav", f, "audio/wav")},
-                    data={
-                        "model": self.openai_cfg.get("model", "whisper-1"),
-                        "language": self.openai_cfg.get("language", "es"),
-                        "response_format": "text",
-                    },
+                    data=data,
                     timeout=30.0,
                 )
                 response.raise_for_status()

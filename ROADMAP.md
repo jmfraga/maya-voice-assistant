@@ -77,39 +77,51 @@
 
 ---
 
-## Pendiente: Pre-Onboarding con Papas
+## Pre-Onboarding con Papas
 
 ### Limpieza del test
 - [ ] Quitar usuario "juanma" de config.yaml en Pi
 - [ ] Borrar usuario juanma de DB (delete_user desde admin)
 - [ ] Borrar voiceprint juanma.npy (si se creo)
 
-### Bugs encontrados en prueba
-- [ ] Fecha en contexto LLM mezcla idiomas ("Saturday 14 de March") — forzar locale espanol
-- [ ] STT confunde nombres cortos — agregar nombres de usuarios al initial_prompt de Whisper
+### Bugs encontrados en prueba — RESUELTOS (2026-03-14)
+- [x] Fecha en contexto LLM mezcla idiomas — `_fecha_es()` con lookup tables en llm.py
+- [x] STT confunde nombres cortos — `set_user_names()` en stt.py, initial_prompt con nombres
 
-### UX para adultos mayores
-- [ ] Layout adaptable de botones: 2 grandes (2 usuarios) vs 3+ mas chicos
+### UX para adultos mayores — RESUELTOS (2026-03-14)
+- [x] Layout adaptable de botones: 2 grandes centrados vs 3+ divide parejo
 - [ ] Probar onboarding demo (Step 7) con clima inyectado
 
 ---
 
-## Sprint 4: Refinamiento para Adultos Mayores
+## Sprint 4: Refinamiento para Adultos Mayores — EN PROGRESO (2026-03-14)
+
+### Bug fixes
+- [x] Fecha en contexto LLM en español ("Sabado 14 de Marzo" en vez de "Saturday 14 de March")
+- [x] STT initial_prompt con nombres de usuarios (mejora transcripcion de nombres cortos)
 
 ### Recordatorios inteligentes
-- [ ] Recordatorios automaticos de medicamento si tienen horario configurado
-- [ ] Maya avisa proactivamente: "Juan, ya es hora de tu metformina"
-- [ ] Confirmar toma por voz: "ya me la tome" → registra en medication_log
+- [x] Recordatorios automaticos de medicamento si tienen horario configurado
+- [x] Parser de schedules: tiempos explicitos, "cada N horas", comidas, "X veces al dia"
+- [x] DB helper `is_medication_taken_today()` con ventana ±2 horas
+- [x] Maya avisa proactivamente: "Juan, ya es hora de tu metformina"
+- [x] Confirmar toma por voz: "ya me la tome" → registra en medication_log (ya existia via CONFIRMAR_MEDICAMENTO)
+
+### Mejoras de display
+- [x] Layout adaptable de botones: 2 usuarios → grandes centrados (350px max), 3+ → divide parejo
+- [x] Animacion de escucha: 7 barras ecualizador sinusoidal sobre area de transcript
+- [ ] Pantalla "Mi dia": resumen matutino (clima, meds pendientes, recordatorios)
+- [ ] Fotos de usuarios en botones (data/photos/)
 
 ### Mejoras de voz
 - [ ] Speaker ID: habilitar en produccion (resemblyzer en Pi)
 - [ ] Voiceprints de mama y papa (durante onboarding o manual)
 - [ ] Porcupine key renewal (clave actual puede expirar)
 
-### Mejoras de display
-- [ ] Pantalla "Mi dia": resumen matutino (clima, meds pendientes, recordatorios)
-- [ ] Fotos de usuarios en botones (data/photos/)
-- [ ] Indicador visual de que Maya esta escuchando (animacion)
+### Pre-onboarding con papas
+- [ ] Quitar usuario "juanma" de config.yaml en Pi
+- [ ] Borrar usuario juanma de DB y voiceprint
+- [ ] Probar onboarding demo (Step 7) con clima inyectado
 
 ---
 

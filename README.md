@@ -25,6 +25,7 @@ Asistente de voz diseñada para personas mayores, ejecutándose en Raspberry Pi 
 
 ### Salud
 - **Medicamentos**: Registro, horarios, confirmación de tomas por voz
+- **Recordatorios proactivos**: Maya avisa automáticamente cuando es hora de tomar un medicamento según su horario configurado (tiempos explícitos, "cada N horas", comidas, frecuencia)
 - **Esquemas de tratamiento**: Dosis variable según mediciones (ej. glucosa → insulina)
 - **Alertas**: Notificación a familiares por Telegram si medición fuera de rango
 - **Recordatorios**: Creación y notificación por voz
@@ -38,10 +39,12 @@ Asistente de voz diseñada para personas mayores, ejecutándose en Raspberry Pi 
 ### UX para adultos mayores
 - **Onboarding 8 pasos**: Bienvenida, nombre, wake word, voiceprint, sobre ti, medicamentos, demo, despedida
 - **Display**: Tkinter multi-pantalla fullscreen (reloj, clima, meds, contactos, recordatorios)
+- **Layout adaptable**: 2 usuarios → botones grandes centrados; 3+ → distribución uniforme
+- **Animación de escucha**: Ecualizador de 7 barras durante grabación de voz
 - **Panel admin**: Interfaz web Flask para configuración remota
 
 ### Infraestructura
-- **Synapse**: Mac Mini M4 Pro como servidor AI local (LLM, STT, TTS)
+- **[Synapse](https://github.com/jmfraga/synapse-router)**: Mac Mini M4 Pro como servidor AI local (LLM, STT, TTS). Alternativa comercial: [OpenRouter](https://openrouter.ai/) u otros routers compatibles con OpenAI API (requiere agregar el proveedor en configuración).
 - **Backup SD**: Clonación diaria a SD USB de respaldo (cron 4am, auto-detecta USB)
 - **Autostart**: .desktop en ~/.config/autostart/
 
@@ -52,7 +55,7 @@ Asistente de voz diseñada para personas mayores, ejecutándose en Raspberry Pi 
 | `main.py` | Entry point, orquesta: wake word → record → STT → LLM → acciones → TTS → follow-up |
 | `audio.py` | Grabación (pw-record), reproducción (pw-play), detección de silencio |
 | `wakeword.py` | Detección de wake word con Porcupine |
-| `stt.py` | Speech-to-text (Synapse / OpenAI API / whisper.cpp) |
+| `stt.py` | Speech-to-text (Synapse / OpenAI API / whisper.cpp) con initial_prompt de nombres |
 | `tts.py` | Text-to-speech (Synapse / OpenAI / ElevenLabs / Piper) |
 | `llm.py` | LLM con Synapse/Claude/OpenAI, contexto y parsing de acciones |
 | `db.py` | SQLite: usuarios, medicamentos, contactos, recordatorios, memorias, tratamientos, mediciones |
