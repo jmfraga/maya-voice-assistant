@@ -125,7 +125,7 @@
 
 ---
 
-## Sprint 5: Internet + Entretenimiento — EN PROGRESO (2026-03-14)
+## Sprint 5: Internet + Entretenimiento — COMPLETADO (2026-03-14)
 
 ### Busquedas en internet
 - [x] Perplexity API (search.py) — modulo nuevo, OpenAI-compatible
@@ -136,31 +136,66 @@
 ### Entretenimiento
 - [x] Chistes, trivias, cuentos (instrucciones en system_prompt, LLM genera directamente)
 - [x] Noticias del dia via BUSCAR (el LLM usa Perplexity cuando piden noticias)
-- [x] Radio/musica: 5 estaciones (romantica, clasica, noticias, ranchera, instrumental) via ffplay/PipeWire
+- [x] Radio/musica: 5 estaciones via ffplay/PipeWire, admin CRUD, DB-backed
 - [x] Radio se pausa al hablar con Maya y reanuda al terminar
+- [x] Pantalla de radio con botones de estaciones + boton apagar
 - [x] Juegos de memoria / estimulacion cognitiva via system_prompt (LLM lleva el juego conversacionalmente)
 
 ### Salud y bienestar
-- [x] Reportes semanales de salud via Telegram (domingos 10am, a todos los contactos)
-- [ ] Deteccion de estado de animo por voz (tono, velocidad)
+- [x] Reportes semanales de salud via Telegram (domingos 10am, a contactos de emergencia)
+- [x] Deteccion de estado de animo: audio (RMS, duracion) + texto (keywords), alerta a familia si 3/5 concernientes
 - [x] Sugerencias de actividad: "llevas mucho sin hablarme, todo bien?" (8+ horas, 9am-8pm)
+- [x] Contactos de emergencia: flag para separar alertas de mensajeria normal
+
+### Admin y UX
+- [x] Logo y favicon en admin
+- [x] Logo en README
+- [x] Admin Radio: CRUD estaciones, links a fuentes de streams
+- [x] Auto-restart wrapper (scripts/run_maya.sh) + acceso directo en escritorio Pi
 
 ---
 
-## Sprint 6: Robustez y Escala
+## Sprint 6: Interaccion Rapida y Barge-in
+
+### Barge-in y comandos directos (prioridad alta)
+- [ ] **Barge-in**: "Maya para" detiene TTS inmediatamente y reanuda escucha
+- [ ] **Comandos directos sin LLM**: "pon musica", "apaga radio", "para", "cancela" → bypass LLM para baja latencia
+- [ ] **Early intent detection**: clasificar intent antes de enviar a LLM para comandos claros
+- [ ] **"Maya cancela" / "Maya olvidalo"**: comando explicito de salida en cualquier momento
+
+### Saludo matutino contextualizado
+- [ ] Maya saluda automaticamente al primer usuario que interactua en la manana
+- [ ] Resumen hablado: clima, medicamentos pendientes, recordatorios del dia, citas
+- [ ] Configurable como "despertador inteligente" (hora fija o al detectar movimiento/voz)
+
+### Analytics en admin
+- [ ] **Telemetria ligera**: STT latency, LLM latency, TTS latency, errores (sin guardar audio)
+- [ ] **Dashboard de uso**: interacciones por usuario, tendencias, horarios pico
+- [ ] **Dashboard de salud**: cumplimiento de medicamentos, mediciones, alertas, animo
+- [ ] **Privacidad**: metricas agregadas, sin contenido de conversaciones en analytics
+
+### Personalidad configurable
+- [ ] UI en admin para editar tono, velocidad, estilo de respuesta de Maya
+- [ ] Presets: "paciente y lento", "animado y breve", "formal"
+
+---
+
+## Sprint 7: Robustez y Produccion
 
 ### Hardening
-- [ ] Fallback LLM: Synapse → Claude → OpenAI (ya implementado, verificar)
-- [ ] Fallback TTS: Synapse → OpenAI → ElevenLabs → Piper (ya implementado, verificar)
-- [ ] Fallback STT: OpenAI API → Synapse → whisper.cpp (ya implementado, verificar)
-- [ ] Manejo de errores de red (WiFi intermitente en casa de papas)
-- [ ] Autostart robusto: systemd service en lugar de .desktop autostart
+- [ ] Verificar fallback chains completas (LLM/STT/TTS) con pruebas de fallo
+- [ ] Manejo de errores de red (WiFi intermitente en casa de papas, retry con backoff)
+- [ ] systemd service (en lugar de .desktop autostart) para robustez maxima
 - [ ] UPS/no-break para RPi
 
 ### Monitoreo
-- [ ] Health check: Telegram alert si Maya se cae
-- [ ] Metricas: tiempo de respuesta, errores STT, uso de API
-- [ ] Dashboard en admin: estadisticas de uso por usuario
+- [ ] Health check: Telegram alert si Maya se cae o no responde
+- [ ] Metricas exportadas (Prometheus-compatible o SQLite simple)
+
+### Mejoras de audio
+- [ ] VAD avanzado (Silero) para ambientes ruidosos (TV, cocina)
+- [ ] Streaming STT / transcripcion parcial para reducir latencia
+- [ ] Confidence scoring en STT — si baja, pedir que repita
 
 ### Multi-usuario avanzado
 - [ ] Guest mode: visitantes pueden hablar sin registro
@@ -171,7 +206,7 @@
 
 ## Infraestructura
 
-- [ ] Backup SD automatico: USB SD reader + cron diario clona SD principal (script listo, falta instalar cron en Pi)
+- [ ] Backup SD automatico: instalar cron en Pi (script listo)
 - [ ] Ollama en M4: modelos locales como alternativa a APIs
 - [x] M4 como servidor AI centralizado (Synapse: Maya + MedExpert)
 - [ ] Monitoring (Prometheus + Grafana)
