@@ -16,10 +16,12 @@ class TTS:
         self.eleven_cfg = config.get("elevenlabs", {})
         self.openai_cfg = config.get("openai", {})
         self.piper_cfg = config.get("piper", {})
+        self.synapse_cfg = config.get("synapse", {})
 
     def speak(self, text: str) -> str | None:
         """Generate speech from text. Returns path to WAV file or None."""
         providers = {
+            "synapse": self._synapse,
             "openai": self._openai,
             "elevenlabs": self._elevenlabs,
             "piper": self._piper,
@@ -36,6 +38,43 @@ class TTS:
         if fallback_fn:
             return fallback_fn(text)
         return None
+
+    def _synapse(self, text: str) -> str | None:
+        """Generate speech using Synapse TTS (macOS voices via M4)."""
+        base_url = self.synapse_cfg.get("base_url", "")
+        api_key = self.synapse_cfg.get("api_key", "")
+        if not base_url or not api_key:
+            log.warning("Synapse TTS no configurado")
+            return None
+
+        voice = self.synapse_cfg.get("voice", "paulina")
+
+        try:
+            response = httpx.post(
+                f"{base_url}/v1/audio/speech",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "tts-1",
+                    "input": text,
+                    "voice": voice,
+                },
+                timeout=30.0,
+            )
+            response.raise_for_status()
+
+            path = tempfile.mktemp(suffix=".wav", prefix="maya_tts_")
+            with open(path, "wb") as f:
+                f.write(response.content)
+
+            log.info("Synapse TTS ok (%d bytes, voz=%s)", len(response.content), voice)
+            return path
+
+        except Exception as e:
+            log.error("Error Synapse TTS: %s", e)
+            return None
 
     def _openai(self, text: str) -> str | None:
         """Generate speech using OpenAI TTS API."""

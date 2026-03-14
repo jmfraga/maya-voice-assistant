@@ -49,27 +49,55 @@ def parse_actions(text: str) -> tuple[str, list[dict]]:
 class LLM:
     def __init__(self, config: dict, assistant_config: dict):
         self.provider = config.get("primary", "claude")
+        self.fallback_provider = config.get("fallback", "")
         self.config = config
         self.system_prompt = assistant_config.get("system_prompt", "")
         self.assistant_name = assistant_config.get("name", "Maya")
         self._client = None
+        self._synapse_cfg = config.get("synapse", {})
         self._init_client()
 
     def _init_client(self):
         """Initialize the appropriate LLM client."""
         if self.provider == "claude":
-            import anthropic
-            cfg = self.config.get("claude", {})
-            self._client = anthropic.Anthropic(api_key=cfg.get("api_key", ""))
-            self.model = cfg.get("model", "claude-sonnet-4-20250514")
-            self.max_tokens = cfg.get("max_tokens", 500)
+            self._init_claude()
         elif self.provider == "openai":
-            cfg = self.config.get("openai", {})
-            self._api_key = cfg.get("api_key", "")
-            self.model = cfg.get("model", "gpt-4o-mini")
-            self.max_tokens = cfg.get("max_tokens", 500)
+            self._init_openai()
+        elif self.provider == "synapse":
+            self._init_synapse()
+            # Also init fallback
+            if self.fallback_provider == "claude":
+                self._init_claude()
+            elif self.fallback_provider == "openai":
+                self._init_openai()
         else:
             log.error("Proveedor LLM desconocido: %s", self.provider)
+
+    def _init_claude(self):
+        import anthropic
+        cfg = self.config.get("claude", {})
+        self._client = anthropic.Anthropic(api_key=cfg.get("api_key", ""))
+        self._claude_model = cfg.get("model", "claude-sonnet-4-20250514")
+        self._claude_max_tokens = cfg.get("max_tokens", 500)
+        if self.provider == "claude":
+            self.model = self._claude_model
+            self.max_tokens = self._claude_max_tokens
+
+    def _init_openai(self):
+        cfg = self.config.get("openai", {})
+        self._openai_api_key = cfg.get("api_key", "")
+        self._openai_model = cfg.get("model", "gpt-4o-mini")
+        self._openai_max_tokens = cfg.get("max_tokens", 500)
+        if self.provider == "openai":
+            self.model = self._openai_model
+            self.max_tokens = self._openai_max_tokens
+
+    def _init_synapse(self):
+        cfg = self._synapse_cfg
+        self._synapse_base_url = cfg.get("base_url", "")
+        self._synapse_api_key = cfg.get("api_key", "")
+        self.model = cfg.get("model", "maya-auto")
+        self.max_tokens = cfg.get("max_tokens", 500)
 
     def build_context(self, user_name: str, db=None, user_id: str | None = None,
                        weather=None) -> str:
@@ -156,22 +184,60 @@ class LLM:
         context = self.build_context(user_name, db, user_id, weather=weather)
         system = f"{self.system_prompt}\n\n--- Contexto ---\n{context}"
 
-        try:
-            if self.provider == "claude":
-                full_text = self._chat_claude(system, user_text)
-            elif self.provider == "openai":
-                full_text = self._chat_openai(system, user_text)
-            else:
-                return "Proveedor LLM no configurado.", []
+        providers = {
+            "synapse": self._chat_synapse,
+            "claude": self._chat_claude,
+            "openai": self._chat_openai,
+        }
 
-            clean_text, actions = parse_actions(full_text)
-            if actions:
-                log.info("Acciones detectadas: %s", [a["type"] for a in actions])
-            return clean_text, actions
+        # Try primary
+        primary_fn = providers.get(self.provider)
+        if primary_fn:
+            try:
+                full_text = primary_fn(system, user_text)
+                clean_text, actions = parse_actions(full_text)
+                if actions:
+                    log.info("Acciones detectadas: %s", [a["type"] for a in actions])
+                return clean_text, actions
+            except Exception as e:
+                log.error("Error LLM %s: %s", self.provider, e)
+                # Try fallback
+                if self.fallback_provider:
+                    fallback_fn = providers.get(self.fallback_provider)
+                    if fallback_fn:
+                        try:
+                            log.info("Usando fallback LLM: %s", self.fallback_provider)
+                            full_text = fallback_fn(system, user_text)
+                            clean_text, actions = parse_actions(full_text)
+                            if actions:
+                                log.info("Acciones detectadas (fallback): %s", [a["type"] for a in actions])
+                            return clean_text, actions
+                        except Exception as e2:
+                            log.error("Error LLM fallback %s: %s", self.fallback_provider, e2)
 
-        except Exception as e:
-            log.error("Error LLM (%s): %s", self.provider, e)
-            return "Disculpe, tuve un problema. ¿Puede repetir?", []
+        return "Disculpe, tuve un problema. ¿Puede repetir?", []
+
+    def _chat_synapse(self, system: str, user_text: str) -> str:
+        """Chat via Synapse (OpenAI-compatible with Smart Route)."""
+        import httpx
+        response = httpx.post(
+            f"{self._synapse_base_url}/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self._synapse_api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": self.model,
+                "max_tokens": self.max_tokens,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_text},
+                ],
+            },
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"]
 
     def _chat_claude(self, system: str, user_text: str) -> str:
         response = self._client.messages.create(

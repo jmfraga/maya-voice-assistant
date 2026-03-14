@@ -350,7 +350,20 @@ def update_reminders_display(db: Database, display: Display):
 def _llm_quick(llm, system: str, prompt: str, max_tokens: int = 150) -> str:
     """Quick LLM call for extraction/consolidation tasks."""
     try:
-        if llm.provider == "claude":
+        if llm.provider == "synapse":
+            import httpx
+            resp = httpx.post(
+                f"{llm._synapse_base_url}/v1/chat/completions",
+                headers={"Authorization": f"Bearer {llm._synapse_api_key}",
+                         "Content-Type": "application/json"},
+                json={"model": llm.model, "max_tokens": max_tokens,
+                      "messages": [
+                          {"role": "system", "content": system},
+                          {"role": "user", "content": prompt}]},
+                timeout=15.0,
+            )
+            return resp.json()["choices"][0]["message"]["content"].strip()
+        elif llm.provider == "claude":
             result = llm._client.messages.create(
                 model=llm.model, max_tokens=max_tokens,
                 system=system,
@@ -361,7 +374,7 @@ def _llm_quick(llm, system: str, prompt: str, max_tokens: int = 150) -> str:
             import httpx
             resp = httpx.post(
                 "https://api.openai.com/v1/chat/completions",
-                headers={"Authorization": f"Bearer {llm._api_key}",
+                headers={"Authorization": f"Bearer {llm._openai_api_key}",
                          "Content-Type": "application/json"},
                 json={"model": llm.model, "max_tokens": max_tokens,
                       "messages": [
