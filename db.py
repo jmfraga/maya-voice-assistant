@@ -168,6 +168,11 @@ class Database:
             if "telegram_chat_id" not in cols:
                 conn.execute("ALTER TABLE users ADD COLUMN telegram_chat_id INTEGER")
                 log.info("Columna telegram_chat_id agregada a users")
+            # Contacts migration: emergency flag
+            contact_cols = [row[1] for row in conn.execute("PRAGMA table_info(contacts)").fetchall()]
+            if "emergency" not in contact_cols:
+                conn.execute("ALTER TABLE contacts ADD COLUMN emergency INTEGER DEFAULT 0")
+                log.info("Columna emergency agregada a contacts")
         log.info("DB inicializada: %s", self.db_path)
 
     # --- Users ---
@@ -373,8 +378,19 @@ class Database:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    def get_emergency_contacts(self, user_id: str) -> list[dict]:
+        """Get only emergency contacts with telegram_chat_id."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM contacts WHERE user_id = ? AND emergency = 1 "
+                "AND telegram_chat_id IS NOT NULL AND telegram_chat_id != 0 "
+                "ORDER BY name",
+                (user_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
     def update_contact(self, contact_id: int, **kwargs):
-        allowed = {"name", "telegram_chat_id", "relationship", "phone"}
+        allowed = {"name", "telegram_chat_id", "relationship", "phone", "emergency"}
         fields = {k: v for k, v in kwargs.items() if k in allowed}
         if not fields:
             return

@@ -500,12 +500,11 @@ def _send_weekly_reports(db: Database, telegram: "TelegramBot"):
     for user in db.get_users():
         user_id = user["id"]
         report = generate_weekly_report(db, user_id)
-        # Send to all contacts of this user
-        contacts = db.get_contacts(user_id)
+        # Send to emergency contacts only
+        contacts = db.get_emergency_contacts(user_id)
         for c in contacts:
-            if c.get("telegram_chat_id"):
-                telegram.send_to_chat_id(c["telegram_chat_id"], report)
-                log.info("Reporte semanal de %s enviado a %s", user_id, c["name"])
+            telegram.send_to_chat_id(c["telegram_chat_id"], report)
+            log.info("Reporte semanal de %s enviado a %s", user_id, c["name"])
     log.info("Reportes semanales enviados")
 
 
@@ -731,10 +730,9 @@ def _track_mood(user_id: str, mood: str, db: Database, telegram: "TelegramBot"):
         alert = (f"Aviso sobre {name}: sus ultimas interacciones muestran "
                  f"un patron de animo bajo ({mood_str}). "
                  f"Podria ser bueno comunicarse con {'ella' if name.endswith('a') else 'el'}.")
-        contacts = db.get_contacts(user_id)
+        contacts = db.get_emergency_contacts(user_id)
         for c in contacts:
-            if c.get("telegram_chat_id"):
-                telegram.send_to_chat_id(c["telegram_chat_id"], alert)
+            telegram.send_to_chat_id(c["telegram_chat_id"], alert)
         log.info("Alerta de animo enviada para %s: %s", name, mood_str)
         # Reset tracker to avoid repeated alerts
         _mood_tracker[user_id] = []

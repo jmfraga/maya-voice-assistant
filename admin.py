@@ -173,13 +173,15 @@ def create_app(db=None, telegram_bot=None) -> Flask:
     @app.route("/contacts/<user_id>/add", methods=["POST"])
     def add_contact(user_id):
         chat_id = request.form.get("telegram_chat_id", "0")
-        db.add_contact(
+        cid = db.add_contact(
             user_id,
             request.form["name"],
             telegram_chat_id=int(chat_id) if chat_id else 0,
             relationship=request.form.get("relationship", ""),
             phone=request.form.get("phone", ""),
         )
+        if request.form.get("emergency"):
+            db.update_contact(cid, emergency=1)
         flash("Contacto agregado", "success")
         if request.form.get("redirect") == "pending":
             return redirect(url_for("pending_contacts"))
@@ -195,6 +197,7 @@ def create_app(db=None, telegram_bot=None) -> Flask:
             telegram_chat_id=int(chat_id) if chat_id else 0,
             relationship=request.form.get("relationship", ""),
             phone=request.form.get("phone", ""),
+            emergency=1 if request.form.get("emergency") else 0,
         )
         flash("Contacto actualizado", "success")
         if request.form.get("redirect") == "pending":
