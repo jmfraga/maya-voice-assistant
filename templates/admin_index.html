@@ -25,8 +25,11 @@
         {% for u in users %}
         <div class="user-card">
             <div style="display:flex;align-items:center;gap:4px;margin-bottom:4px">
-                <form method="post" action="/users/edit/{{ u.id }}" style="display:flex;align-items:center;gap:4px">
+                <form method="post" action="/users/edit/{{ u.id }}" style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
                     <input name="real_name" value="{{ u.real_name }}" style="font-size:1.1em;font-weight:bold;width:120px;background:#1a1a2e;border:1px solid transparent;color:#e8e8e8;padding:2px 6px;border-radius:4px"
+                           onfocus="this.style.borderColor='#4ecca3'" onblur="this.style.borderColor='transparent'">
+                    <input name="user_telegram_chat_id" value="{{ u.telegram_chat_id or '' }}" placeholder="Telegram Chat ID"
+                           style="width:130px;font-size:0.8em;background:#1a1a2e;border:1px solid transparent;color:#8899aa;padding:2px 6px;border-radius:4px"
                            onfocus="this.style.borderColor='#4ecca3'" onblur="this.style.borderColor='transparent'">
                     <button type="submit" class="btn btn-primary btn-small" style="padding:2px 8px;font-size:0.75em">OK</button>
                 </form>

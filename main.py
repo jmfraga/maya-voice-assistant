@@ -282,20 +282,32 @@ def execute_actions(actions: list[dict], user_id: str, db: Database,
             elif atype == "MENSAJE_PENDIENTE":
                 message = action.get("message", "")
                 if message and db:
-                    # When user says "tell X that...", save for all contacts named X
-                    # For now, save for the speaking user's contacts
+                    sent = False
+                    user_data = db.get_user(user_id)
+                    user_name = user_data["real_name"] if user_data else user_id
+
+                    # First: try sending to the user's own Telegram
+                    if user_data and user_data.get("telegram_chat_id"):
+                        telegram.send_to_chat_id(
+                            user_data["telegram_chat_id"],
+                            f"{message}"
+                        )
+                        results.append("Mensaje enviado a tu Telegram")
+                        sent = True
+
+                    # Also send to contacts with telegram_chat_id
                     contacts = db.get_contacts(user_id)
-                    if contacts:
-                        for c in contacts:
-                            if c.get("telegram_chat_id"):
-                                telegram.send_to_chat_id(
-                                    c["telegram_chat_id"],
-                                    f"Mensaje de {db.get_user(user_id)['real_name']}: {message}"
-                                )
-                                results.append(f"Mensaje enviado a {c['name']}")
-                                break
-                    else:
-                        results.append("No hay contactos para enviar el mensaje")
+                    for c in contacts:
+                        if c.get("telegram_chat_id"):
+                            telegram.send_to_chat_id(
+                                c["telegram_chat_id"],
+                                f"Mensaje de {user_name}: {message}"
+                            )
+                            results.append(f"Mensaje enviado a {c['name']}")
+                            sent = True
+
+                    if not sent:
+                        results.append("No hay Telegram configurado para enviar el mensaje")
 
             elif atype == "CONSULTA_TRATAMIENTO":
                 _handle_treatment_query(action, user_id, db, telegram, results)
@@ -776,15 +788,6 @@ def main():
         BASE_DIR,
     )
 
-    # Telegram (with DB, LLM, STT for bidirectional chat)
-    telegram = TelegramBot(config.get("telegram", {}), db=db, llm=llm, stt=stt)
-    telegram.start_polling()
-
-    # Admin web interface (accessible via Tailscale)
-    admin_cfg = config.get("admin", {})
-    start_admin(db, admin_cfg.get("host", "0.0.0.0"), admin_cfg.get("port", 8085),
-                telegram_bot=telegram)
-
     # Weather
     weather_cfg = config.get("weather", {})
     weather = Weather(
@@ -792,6 +795,16 @@ def main():
         city=weather_cfg.get("city", ""),
     )
     weather.start()
+
+    # Telegram (with DB, LLM, STT, TTS, weather for bidirectional chat)
+    telegram = TelegramBot(config.get("telegram", {}), db=db, llm=llm, stt=stt,
+                           tts=tts, weather=weather)
+    telegram.start_polling()
+
+    # Admin web interface (accessible via Tailscale)
+    admin_cfg = config.get("admin", {})
+    start_admin(db, admin_cfg.get("host", "0.0.0.0"), admin_cfg.get("port", 8085),
+                telegram_bot=telegram)
 
     # Talk trigger event (for tap-to-talk and wake word)
     talk_event = threading.Event()

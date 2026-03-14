@@ -19,13 +19,15 @@ CONV_AWAITING_RELATIONSHIP = 2
 
 
 class TelegramBot:
-    def __init__(self, config: dict, db=None, llm=None, stt=None):
+    def __init__(self, config: dict, db=None, llm=None, stt=None, tts=None, weather=None):
         self.token = config.get("bot_token", "")
         self.contacts = config.get("contacts", {})
         self.base_url = BASE_URL.format(token=self.token)
         self.db = db
         self.llm = llm
         self.stt = stt
+        self.tts = tts
+        self.weather = weather
         self._conversations = {}  # chat_id -> {state, name}
         self._polling = False
         self._poll_thread = None
@@ -57,11 +59,22 @@ class TelegramBot:
             if name.lower() == recipient.lower():
                 return cid
 
-        # DB contacts (all users)
         if self.db:
+            r = recipient.lower().strip()
+
+            # Check Maya users with telegram_chat_id
+            for user in self.db.get_users():
+                if user.get("telegram_chat_id"):
+                    uname = user["real_name"].lower()
+                    uid = user["id"].lower()
+                    if r == uname or r == uid or r in uname or uname in r:
+                        return user["telegram_chat_id"]
+
+            # DB contacts (all users)
             for user in self.db.get_users():
                 for c in self.db.get_contacts(user["id"]):
-                    if c["name"].lower() == recipient.lower() and c["telegram_chat_id"]:
+                    cname = c["name"].lower()
+                    if c["telegram_chat_id"] and (r == cname or r in cname or cname in r):
                         return c["telegram_chat_id"]
         return None
 
@@ -93,6 +106,47 @@ class TelegramBot:
             return False
         except Exception as e:
             log.error("Error enviando Telegram: %s", e)
+            return False
+
+    def send_voice_to_chat_id(self, chat_id: int, text: str) -> bool:
+        """Generate TTS audio and send as voice message to chat_id."""
+        if not self.tts or not self._is_configured():
+            return False
+        try:
+            audio_path = self.tts.speak(text)
+            if not audio_path:
+                log.warning("TTS no genero audio para voz Telegram")
+                return False
+
+            # Convert to OGG/Opus (Telegram voice format)
+            ogg_path = audio_path.rsplit(".", 1)[0] + ".ogg"
+            result = subprocess.run(
+                ["ffmpeg", "-y", "-i", audio_path, "-c:a", "libopus", "-b:a", "48k", ogg_path],
+                capture_output=True, timeout=30,
+            )
+            os.unlink(audio_path)
+
+            if result.returncode != 0:
+                log.error("ffmpeg ogg error: %s", result.stderr[:200])
+                return False
+
+            with open(ogg_path, "rb") as f:
+                response = httpx.post(
+                    f"{self.base_url}/sendVoice",
+                    data={"chat_id": chat_id},
+                    files={"voice": ("voice.ogg", f, "audio/ogg")},
+                    timeout=30.0,
+                )
+            os.unlink(ogg_path)
+
+            data = response.json()
+            if data.get("ok"):
+                log.info("Voz enviada a chat_id=%d", chat_id)
+                return True
+            log.error("Telegram sendVoice error: %s", data)
+            return False
+        except Exception as e:
+            log.error("Error enviando voz Telegram: %s", e)
             return False
 
     # --- Polling for incoming messages ---
@@ -247,7 +301,14 @@ class TelegramBot:
 
     # --- Chat with Maya ---
     def _handle_chat(self, chat_id: int, text: str):
-        """Handle a regular text message from a registered contact."""
+        """Handle a regular text message. Check if it's a Maya user first, then contacts."""
+        # Check if this chat_id belongs to a Maya user directly
+        user = self.db.get_user_by_chat_id(chat_id) if self.db else None
+        if user:
+            self._handle_user_chat(chat_id, user, text)
+            return
+
+        # Otherwise treat as family contact
         contact = self._require_registered(chat_id)
         if not contact:
             return
@@ -278,6 +339,37 @@ class TelegramBot:
         # Save and send response
         self.db.save_telegram_conversation(chat_id, "assistant", response)
         self.send_to_chat_id(chat_id, response)
+
+    def _handle_user_chat(self, chat_id: int, user: dict, text: str):
+        """Handle chat from a Maya user — same experience as voice."""
+        if not self.llm:
+            self.send_to_chat_id(chat_id, "Maya no esta disponible en este momento.")
+            return
+
+        user_id = user["id"]
+        user_name = user.get("real_name", user_id)
+
+        # Save to regular conversations (same as voice)
+        self.db.save_conversation(user_id, "user", text)
+
+        # Use the same chat method as voice
+        response, actions = self.llm.chat(
+            text,
+            user_name=user_name,
+            db=self.db,
+            user_id=user_id,
+            weather=self.weather,
+        )
+
+        # Process actions with user context
+        self._process_user_actions(actions, user_id, user_name)
+
+        # Save response
+        self.db.save_conversation(user_id, "assistant", response)
+
+        # Send text + voice
+        self.send_to_chat_id(chat_id, response)
+        self.send_voice_to_chat_id(chat_id, response)
 
     # --- Voice messages ---
     def _handle_voice(self, chat_id: int, voice: dict):
@@ -351,6 +443,35 @@ class TelegramBot:
             self.send_to_chat_id(chat_id, "Hubo un error al procesar tu mensaje de voz.")
 
     # --- Actions ---
+    def _process_user_actions(self, actions: list[dict], user_id: str, user_name: str):
+        """Process LLM actions from a direct Maya user chat via Telegram."""
+        if not actions or not self.db:
+            return
+        for action in actions:
+            atype = action.get("type", "")
+            try:
+                if atype == "MEDICAMENTO":
+                    self.db.add_medication(
+                        user_id, action["name"],
+                        action.get("dosage", ""), action.get("schedule", ""),
+                    )
+                elif atype == "CONFIRMAR_MEDICAMENTO":
+                    self.db.confirm_medication_by_name(action["name"], user_id)
+                elif atype == "RECORDATORIO":
+                    self.db.add_reminder(user_id, action["text"], action["time"])
+                elif atype == "MEMORIA":
+                    self.db.save_memory(user_id, action["category"], action["content"])
+                elif atype == "TELEGRAM":
+                    self.send_message(action["recipient"], action["message"])
+                elif atype == "CONTACTO":
+                    self.db.add_contact(
+                        user_id, action["name"],
+                        phone=action.get("phone", ""),
+                        relationship=action.get("relationship", ""),
+                    )
+            except Exception as e:
+                log.error("Error accion usuario %s: %s", atype, e)
+
     def _process_actions(self, actions: list[dict], contact: dict):
         """Process LLM actions from Telegram chat (mainly MENSAJE_PENDIENTE)."""
         if not actions or not self.db:

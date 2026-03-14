@@ -160,11 +160,14 @@ class Database:
     def _init_db(self):
         with self._conn() as conn:
             conn.executescript(SCHEMA)
-            # Migration: add onboarded_at column if missing
+            # Migrations
             cols = [row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()]
             if "onboarded_at" not in cols:
                 conn.execute("ALTER TABLE users ADD COLUMN onboarded_at TEXT")
                 log.info("Columna onboarded_at agregada a users")
+            if "telegram_chat_id" not in cols:
+                conn.execute("ALTER TABLE users ADD COLUMN telegram_chat_id INTEGER")
+                log.info("Columna telegram_chat_id agregada a users")
         log.info("DB inicializada: %s", self.db_path)
 
     # --- Users ---
@@ -203,6 +206,21 @@ class Database:
                 "SELECT onboarded_at FROM users WHERE id = ?", (user_id,),
             ).fetchone()
             return bool(row and row["onboarded_at"])
+
+    def set_user_telegram(self, user_id: str, chat_id: int | None):
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE users SET telegram_chat_id = ? WHERE id = ?",
+                (chat_id, user_id),
+            )
+
+    def get_user_by_chat_id(self, chat_id: int) -> dict | None:
+        """Find a Maya user by their Telegram chat_id."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM users WHERE telegram_chat_id = ?", (chat_id,),
+            ).fetchone()
+            return dict(row) if row else None
 
     def delete_user(self, user_id: str):
         with self._conn() as conn:

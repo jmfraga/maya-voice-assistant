@@ -298,6 +298,17 @@ def create_app(db=None, telegram_bot=None) -> Flask:
         if real_name:
             db.update_user(user_id, real_name)
             flash(f"Usuario actualizado a '{real_name}'", "success")
+        # Telegram chat_id for direct user-Maya chat
+        tg_chat_id = request.form.get("user_telegram_chat_id", "").strip()
+        if tg_chat_id:
+            try:
+                db.set_user_telegram(user_id, int(tg_chat_id))
+                flash("Telegram vinculado al usuario", "success")
+            except ValueError:
+                flash("Chat ID debe ser un numero", "error")
+        elif "user_telegram_chat_id" in request.form:
+            # Field present but empty — clear the association
+            db.set_user_telegram(user_id, None)
         return redirect(url_for("index"))
 
     @app.route("/users/delete/<user_id>", methods=["POST"])

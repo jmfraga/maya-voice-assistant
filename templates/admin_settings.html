@@ -1,6 +1,28 @@
 {% extends "admin_base.html" %}
 {% block title_extra %} - Configuracion{% endblock %}
 {% block content %}
+
+<!-- Wake Word (separate form for multipart file upload) -->
+<div class="card">
+    <h2>Wake Word</h2>
+    <div style="margin-bottom:8px;padding:12px;background:#0f3460;border-radius:6px">
+        <p style="color:#e8e8e8;font-size:0.9em;margin-bottom:8px">
+            <strong>Archivo wake word (.ppn)</strong>:
+            {% if ppn_exists %}
+            <span style="color:#4ecca3">{{ config.wake_word.keyword_path }} (instalado)</span>
+            {% else %}
+            <span style="color:#e94560">No instalado</span> — Entrena en
+            <a href="https://console.picovoice.ai" target="_blank">console.picovoice.ai</a>,
+            descarga el .ppn y subelo aqui.
+            {% endif %}
+        </p>
+        <form method="post" action="/settings/upload-ppn" enctype="multipart/form-data" style="display:flex;gap:8px;align-items:center">
+            <input type="file" name="ppn_file" accept=".ppn" style="color:#8899aa;font-size:0.85em">
+            <button type="submit" class="btn btn-primary btn-small">Subir .ppn</button>
+        </form>
+    </div>
+</div>
+
 <form method="post" action="/settings/save">
 
 <!-- Synapse (M4) -->
@@ -223,29 +245,6 @@
         </div>
     </div>
 </div>
-
-<!-- PPN upload (outside main form because multipart can't nest) -->
-</form>
-<div class="card">
-    <h2>Wake Word</h2>
-    <div style="margin-bottom:8px;padding:12px;background:#0f3460;border-radius:6px">
-        <p style="color:#e8e8e8;font-size:0.9em;margin-bottom:8px">
-            <strong>Archivo wake word (.ppn)</strong>:
-            {% if ppn_exists %}
-            <span style="color:#4ecca3">{{ config.wake_word.keyword_path }} (instalado)</span>
-            {% else %}
-            <span style="color:#e94560">No instalado</span> — Entrena en
-            <a href="https://console.picovoice.ai" target="_blank">console.picovoice.ai</a>,
-            descarga el .ppn y subelo aqui.
-            {% endif %}
-        </p>
-        <form method="post" action="/settings/upload-ppn" enctype="multipart/form-data" style="display:flex;gap:8px;align-items:center">
-            <input type="file" name="ppn_file" accept=".ppn" style="color:#8899aa;font-size:0.85em">
-            <button type="submit" class="btn btn-primary btn-small">Subir .ppn</button>
-        </form>
-    </div>
-</div>
-<form method="post" action="/settings/save">
 
 <!-- Audio -->
 <div class="card">
