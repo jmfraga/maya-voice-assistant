@@ -206,7 +206,7 @@
 
 ## Infraestructura
 
-- [ ] Backup SD automatico: instalar cron en Pi (script listo)
+- [x] Backup SD automatico: script + cron diario 4am en Pi (2026-03-14)
 - [ ] Ollama en M4: modelos locales como alternativa a APIs
 - [x] M4 como servidor AI centralizado (Synapse: Maya + MedExpert)
 - [ ] Monitoring (Prometheus + Grafana)
