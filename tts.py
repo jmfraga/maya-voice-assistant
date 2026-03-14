@@ -57,7 +57,7 @@ class TTS:
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": "tts-1",
+                    "model": self.synapse_cfg.get("model", "tts-local"),
                     "input": text,
                     "voice": voice,
                 },
