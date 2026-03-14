@@ -487,13 +487,48 @@ def _smart_save_memory(llm, db, user_id: str, category: str, new_content: str,
     db.save_memory(user_id, category, new_content)
 
 
+def _extract_medication(llm, raw_text: str) -> dict | None:
+    """Use LLM to extract medication info from spoken text.
+
+    Returns {"name": ..., "dosage": ..., "schedule": ...} or None.
+    """
+    prompt = (
+        f"El usuario dijo: '{raw_text}'\n\n"
+        "Extrae la informacion del medicamento mencionado. "
+        "Responde UNICAMENTE en este formato JSON (sin markdown, sin explicacion):\n"
+        '{"name": "nombre del medicamento", "dosage": "dosis si la menciono o vacio", '
+        '"schedule": "horario si lo menciono o vacio"}\n\n'
+        "Si no menciona ningun medicamento o dice que no toma, responde: NINGUNO"
+    )
+    result = _llm_quick(
+        llm,
+        "Eres un extractor de datos medicos. Responde solo JSON o NINGUNO.",
+        prompt, max_tokens=100,
+    )
+    if not result or "NINGUNO" in result.upper():
+        return None
+    try:
+        import json
+        cleaned = result.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0]
+        return json.loads(cleaned)
+    except (json.JSONDecodeError, ValueError):
+        log.warning("No pude parsear medicamento: %s", result)
+        return {"name": raw_text.strip(), "dosage": "", "schedule": ""}
+
+
 def run_onboarding(user_id: str, user_name: str, config: dict, db,
-                    stt, tts, llm, display, audio_cfg: dict):
-    """Guided onboarding: Maya introduces herself and learns about the user."""
+                    stt, tts, llm, display, audio_cfg: dict,
+                    speaker: "SpeakerID | None" = None):
+    """Guided onboarding: 8-step introduction for first-time users."""
     log.info("=== Onboarding para %s ===", user_name)
 
     display.show_conversation()
     display.set_user(user_name)
+
+    sample_rate = audio_cfg.get("sample_rate", 16000)
+    voice_samples: list = []  # raw audio arrays for enrollment
 
     def _say(text):
         """Speak and show on display."""
@@ -504,41 +539,44 @@ def run_onboarding(user_id: str, user_name: str, config: dict, db,
             play_audio(path)
             os.unlink(path)
 
-    def _listen():
-        """Record, transcribe, return text or None."""
+    def _listen(initial_wait=8.0, collect_audio=False):
+        """Record, transcribe, return text (or (text, audio) if collect_audio)."""
         display.set_status("Escuchando...", "#e94560")
         display.set_transcript("...")
         audio = record_until_silence(
-            sample_rate=audio_cfg.get("sample_rate", 16000),
+            sample_rate=sample_rate,
             silence_threshold=audio_cfg.get("silence_threshold", 500),
             silence_duration=audio_cfg.get("silence_duration", 1.5),
             max_seconds=audio_cfg.get("max_record_seconds", 30),
-            initial_wait=8.0,
+            initial_wait=initial_wait,
         )
         if audio is None:
-            return None
+            return (None, None) if collect_audio else None
         display.set_status("Procesando...", "#f0a500")
-        wav_path = save_wav(audio, audio_cfg.get("sample_rate", 16000))
+        wav_path = save_wav(audio, sample_rate)
         text = stt.transcribe(wav_path)
         os.unlink(wav_path)
         if text:
             display.set_transcript(text)
             log.info("Onboarding respuesta: %s", text)
+        if collect_audio:
+            return text, audio
         return text
 
-    # --- Step 1: Introduction ---
+    # -- Step 1: Welcome --
     _say(f"Hola {user_name}! Soy Maya, tu asistente personal. "
          "Estoy aqui para ayudarte con tus medicamentos, recordatorios, "
-         "y lo que necesites. Vamos a conocernos un poquito!")
+         "y lo que necesites. Vamos a conocernos!")
 
     time.sleep(0.5)
 
-    # --- Step 2: Preferred name ---
+    # -- Step 2: Preferred name --
     question_name = "Como te gustaria que te llame?"
     _say("Para empezar, como te gustaria que te llame? "
          "Puedes decirme tu nombre, un apodo, o como prefieras.")
 
     nickname_raw = _listen()
+    nickname = user_name
     if nickname_raw:
         nickname = _extract_with_llm(llm, question_name, nickname_raw)
         _smart_save_memory(llm, db, user_id, "preferencia",
@@ -549,51 +587,138 @@ def run_onboarding(user_id: str, user_name: str, config: dict, db,
 
     time.sleep(0.3)
 
-    # --- Step 3: What to remember ---
-    question_about = "Hay algo importante que quieras que recuerde sobre ti?"
-    _say("Cuentame, hay algo importante que quieras que recuerde sobre ti? "
-         "Por ejemplo, tus gustos, tu comida favorita, algo que te guste hacer...")
+    # -- Step 3: Wake word practice --
+    _say("Para hablarme, solo di 'Oye Maya'. Vamos a practicar! Dime: Oye Maya.")
+
+    ww_text, ww_audio = _listen(initial_wait=10.0, collect_audio=True)
+    if ww_audio is not None:
+        voice_samples.append(ww_audio)
+    if ww_text:
+        _say("Muy bien! Asi de facil. Cada que necesites algo, solo di Oye Maya.")
+    else:
+        _say("No te preocupes, con la practica se hace mas facil. "
+             "Solo di Oye Maya cuando quieras hablarme.")
+
+    time.sleep(0.3)
+
+    # -- Step 4: Voice enrollment (3 phrases) --
+    _say("Ahora voy a aprender a reconocer tu voz para saber quien me habla. "
+         "Te voy a pedir que repitas tres frases cortitas.")
+    time.sleep(0.3)
+
+    enrollment_phrases = [
+        "Ahora dime: Hoy es un buen dia.",
+        "Ahora dime: Me gusta platicar con Maya.",
+        "Y por ultimo: Buenos dias Maya.",
+    ]
+
+    for prompt_text in enrollment_phrases:
+        _say(prompt_text)
+        phrase_text, phrase_audio = _listen(initial_wait=10.0, collect_audio=True)
+        if phrase_audio is not None:
+            voice_samples.append(phrase_audio)
+        if phrase_text:
+            _say("Perfecto!")
+        else:
+            _say("No importa, seguimos.")
+        time.sleep(0.2)
+
+    # Attempt enrollment with collected samples
+    if speaker and voice_samples:
+        try:
+            ok = speaker.enroll(user_id, voice_samples, sample_rate=sample_rate)
+            if ok:
+                _say("Listo! Ya puedo reconocer tu voz.")
+                log.info("Enrollment exitoso para %s con %d muestras",
+                         user_id, len(voice_samples))
+            else:
+                log.warning("Enrollment fallo para %s", user_id)
+        except Exception as e:
+            log.warning("Enrollment no disponible: %s", e)
+    elif not voice_samples:
+        log.info("Sin muestras de voz para enrollment de %s", user_id)
+
+    time.sleep(0.3)
+
+    # -- Step 5: About you --
+    _say("Cuentame algo sobre ti. Que te gusta hacer? Tu comida favorita? "
+         "Lo que quieras compartir.")
 
     about_raw = _listen()
     if about_raw:
-        about = _extract_with_llm(llm, question_about, about_raw)
+        about = _extract_with_llm(llm, "Cuentame algo sobre ti", about_raw)
         _smart_save_memory(llm, db, user_id, "informacion", about)
-        _say(f"Que interesante! Ya lo guarde.")
+        _say("Que interesante! Ya lo guarde.")
     else:
         _say("No te preocupes, poco a poco nos vamos conociendo.")
 
     time.sleep(0.3)
 
-    # --- Step 4: How to help ---
-    question_help = "En que te gustaria que te ayude mas?"
-    _say("Y por ultimo, en que te gustaria que te ayude? "
-         "Puedo recordarte tus medicinas, ponerte recordatorios, "
-         "mandarte mensajes por Telegram, o simplemente platicar contigo.")
+    # -- Step 6: Medications --
+    _say("Tomas algun medicamento? Dime cual y te lo anoto.")
 
-    help_raw = _listen()
-    if help_raw:
-        help_pref = _extract_with_llm(llm, question_help, help_raw)
-        _smart_save_memory(llm, db, user_id, "preferencia",
-                           f"Le gustaria ayuda con: {help_pref}")
-        _say("Entendido! Lo voy a tener presente.")
+    med_count = 0
+    for _ in range(10):  # max 10 medications
+        med_raw = _listen(initial_wait=10.0)
+        if not med_raw:
+            break
+
+        lower = med_raw.lower().strip()
+        if lower in ("no", "no gracias", "ninguno", "ya no", "eso es todo",
+                      "ya", "nada mas", "nada", "no mas"):
+            break
+
+        med_info = _extract_medication(llm, med_raw)
+        if med_info and med_info.get("name"):
+            db.add_medication(
+                user_id,
+                med_info["name"],
+                med_info.get("dosage", ""),
+                med_info.get("schedule", ""),
+            )
+            med_count += 1
+            _say(f"Anote {med_info['name']}. Algun otro medicamento?")
+        else:
+            break
+
+    if med_count > 0:
+        _say(f"Listo, tengo {med_count} medicamento{'s' if med_count > 1 else ''} "
+             f"registrado{'s' if med_count > 1 else ''}.")
     else:
-        _say("No te preocupes, cuando necesites algo solo dime Oye Maya.")
+        _say("Perfecto, si despues necesitas agregar alguno me dices.")
 
     time.sleep(0.3)
 
-    # --- Step 5: Summary ---
-    memories = db.get_memories(user_id, limit=10)
-    summary_parts = []
-    for m in memories:
-        summary_parts.append(f"- {m['content']}")
-    summary = "\n".join(summary_parts) if summary_parts else "Aun no hay notas."
+    # -- Step 7: Quick demo --
+    _say("Ya casi terminamos! Te voy a ensenar lo que puedo hacer. "
+         "Puedes preguntarme que dia es, como esta el clima, "
+         "o pedirme que te recuerde algo. Prueba preguntarme algo!")
 
-    display.set_transcript("Lo que aprendi de ti:")
-    display.set_response(summary)
+    demo_text = _listen(initial_wait=12.0)
+    if demo_text:
+        display.set_status("Pensando...", "#f0a500")
+        response_text, actions = llm.chat(demo_text, nickname, db, user_id)
+        if actions:
+            execute_actions(actions, user_id, db, None, llm=llm)
+        display.set_status("Hablando...", "#e94560")
+        display.set_response(response_text)
+        path = tts.speak(response_text)
+        if path:
+            play_audio(path)
+            os.unlink(path)
+        db.save_conversation(user_id, "user", demo_text)
+        db.save_conversation(user_id, "assistant", response_text)
+    else:
+        _say("No te preocupes, cuando quieras puedes preguntarme lo que sea.")
 
-    _say(f"Listo! Ya nos conocemos un poquito. "
-         "Acuerdate que puedes hablarme cuando quieras diciendo Oye Maya, "
-         "o tocando tu nombre en la pantalla. Aqui estoy para lo que necesites!")
+    time.sleep(0.5)
+
+    # -- Step 8: Wrap-up --
+    _say("Listo! Ya nos conocemos. Acuerdate: solo di Oye Maya y aqui estoy. "
+         "Tambien puedes tocar tu nombre en la pantalla.")
+
+    # Mark onboarding complete
+    db.set_onboarded(user_id)
 
     time.sleep(2)
 
@@ -753,7 +878,7 @@ def main():
                 uname = db_user["real_name"] if db_user else uid
                 try:
                     run_onboarding(uid, uname, config, db, stt, tts, llm,
-                                   display, audio_cfg)
+                                   display, audio_cfg, speaker=speaker)
                 except Exception as e:
                     log.error("Error en onboarding: %s", e, exc_info=True)
                     display.active_user_id = None

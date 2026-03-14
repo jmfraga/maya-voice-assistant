@@ -471,7 +471,8 @@ class Display:
              lambda u=user_id: self._show_reminders(u)),
             ("Tratamiento", "\U0001F489", "#16A085",
              lambda u=user_id: self._show_treatments(u)),
-            ("Conoce a\nMaya", "\u2B50", ACCENT,
+            ("Repetir\nintro" if self.db and self.db.is_onboarded(user_id)
+             else "Conoce a\nMaya", "\u2B50", ACCENT,
              lambda u=user_id: self._start_onboarding(u)),
         ]
 

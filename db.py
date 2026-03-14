@@ -160,6 +160,11 @@ class Database:
     def _init_db(self):
         with self._conn() as conn:
             conn.executescript(SCHEMA)
+            # Migration: add onboarded_at column if missing
+            cols = [row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()]
+            if "onboarded_at" not in cols:
+                conn.execute("ALTER TABLE users ADD COLUMN onboarded_at TEXT")
+                log.info("Columna onboarded_at agregada a users")
         log.info("DB inicializada: %s", self.db_path)
 
     # --- Users ---
@@ -183,6 +188,21 @@ class Database:
                 "UPDATE users SET real_name = ? WHERE id = ?",
                 (real_name, user_id),
             )
+
+    def set_onboarded(self, user_id: str):
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE users SET onboarded_at = datetime('now', 'localtime') WHERE id = ?",
+                (user_id,),
+            )
+            log.info("Onboarding completado para %s", user_id)
+
+    def is_onboarded(self, user_id: str) -> bool:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT onboarded_at FROM users WHERE id = ?", (user_id,),
+            ).fetchone()
+            return bool(row and row["onboarded_at"])
 
     def delete_user(self, user_id: str):
         with self._conn() as conn:
