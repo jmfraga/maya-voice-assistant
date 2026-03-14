@@ -511,6 +511,46 @@ def create_app(db=None, telegram_bot=None) -> Flask:
             return "*" * len(value)
         return value[:4] + "*" * (len(value) - 8) + value[-4:]
 
+    # --- Radio Stations ---
+    @app.route("/radio")
+    @admin_only
+    def radio_stations():
+        stations = db.get_radio_stations(active_only=False)
+        return render_template("admin_radio.html", stations=stations)
+
+    @app.route("/radio/add", methods=["POST"])
+    @admin_only
+    def radio_add():
+        db.add_radio_station(
+            key=request.form["key"],
+            name=request.form["name"],
+            url=request.form["url"],
+            description=request.form.get("description", ""),
+        )
+        flash("Estacion agregada", "success")
+        return redirect(url_for("radio_stations"))
+
+    @app.route("/radio/edit/<int:station_id>", methods=["POST"])
+    @admin_only
+    def radio_edit(station_id):
+        db.update_radio_station(
+            station_id,
+            key=request.form["key"],
+            name=request.form["name"],
+            url=request.form["url"],
+            description=request.form.get("description", ""),
+            active=1 if request.form.get("active") else 0,
+        )
+        flash("Estacion actualizada", "success")
+        return redirect(url_for("radio_stations"))
+
+    @app.route("/radio/delete/<int:station_id>", methods=["POST"])
+    @admin_only
+    def radio_delete(station_id):
+        db.delete_radio_station(station_id)
+        flash("Estacion eliminada", "success")
+        return redirect(url_for("radio_stations"))
+
     @app.route("/settings")
     @admin_only
     def settings():

@@ -37,10 +37,13 @@ STATIONS = {
 
 
 class Radio:
-    def __init__(self):
+    def __init__(self, db=None):
         self._process: subprocess.Popen | None = None
         self._station: str | None = None
         self._lock = threading.Lock()
+        self._db = db
+        if db:
+            db.seed_radio_stations()
 
     @property
     def playing(self) -> bool:
@@ -51,14 +54,24 @@ class Radio:
     def current_station(self) -> str | None:
         return self._station if self.playing else None
 
+    def _get_stations(self) -> dict:
+        """Get stations from DB or fall back to hardcoded STATIONS."""
+        if self._db:
+            rows = self._db.get_radio_stations()
+            if rows:
+                return {r["key"]: {"name": r["name"], "url": r["url"], "desc": r.get("description", "")}
+                        for r in rows}
+        return STATIONS
+
     def play(self, station_key: str) -> str | None:
         """Start playing a radio station. Returns station name or None on error."""
+        stations = self._get_stations()
         key = station_key.strip().lower()
-        station = STATIONS.get(key)
+        station = stations.get(key)
         if not station:
             # Try fuzzy match
-            for k, v in STATIONS.items():
-                if key in k or key in v["name"].lower() or key in v["desc"].lower():
+            for k, v in stations.items():
+                if key in k or key in v["name"].lower() or key in v.get("desc", "").lower():
                     station = v
                     key = k
                     break
@@ -105,5 +118,6 @@ class Radio:
 
     def list_stations(self) -> list[dict]:
         """Return list of available stations."""
-        return [{"key": k, "name": v["name"], "desc": v["desc"]}
-                for k, v in STATIONS.items()]
+        stations = self._get_stations()
+        return [{"key": k, "name": v["name"], "desc": v.get("desc", "")}
+                for k, v in stations.items()]

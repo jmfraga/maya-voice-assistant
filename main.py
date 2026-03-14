@@ -1115,7 +1115,7 @@ def main():
         log.info("Busqueda habilitada (Perplexity)")
 
     # Radio
-    radio = Radio()
+    radio = Radio(db=db)
 
     # Weather
     weather_cfg = config.get("weather", {})

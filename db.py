@@ -141,6 +141,15 @@ CREATE TABLE IF NOT EXISTS pending_messages (
     delivered INTEGER DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now', 'localtime'))
 );
+
+CREATE TABLE IF NOT EXISTS radio_stations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    active INTEGER DEFAULT 1
+);
 """
 
 
@@ -823,3 +832,54 @@ class Database:
                 "UPDATE pending_messages SET delivered = 1 WHERE id = ?",
                 (msg_id,),
             )
+
+    # --- Radio Stations ---
+    def get_radio_stations(self, active_only: bool = True) -> list[dict]:
+        with self._conn() as conn:
+            q = "SELECT * FROM radio_stations"
+            if active_only:
+                q += " WHERE active = 1"
+            q += " ORDER BY id LIMIT 5"
+            return [dict(r) for r in conn.execute(q).fetchall()]
+
+    def add_radio_station(self, key: str, name: str, url: str, description: str = "") -> int:
+        with self._conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO radio_stations (key, name, url, description) VALUES (?, ?, ?, ?)",
+                (key, name, url, description),
+            )
+            log.info("Estacion de radio agregada: %s", name)
+            return cur.lastrowid
+
+    def update_radio_station(self, station_id: int, **kwargs):
+        allowed = {"key", "name", "url", "description", "active"}
+        fields = {k: v for k, v in kwargs.items() if k in allowed}
+        if not fields:
+            return
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        vals = list(fields.values()) + [station_id]
+        with self._conn() as conn:
+            conn.execute(f"UPDATE radio_stations SET {sets} WHERE id = ?", vals)
+
+    def delete_radio_station(self, station_id: int):
+        with self._conn() as conn:
+            conn.execute("DELETE FROM radio_stations WHERE id = ?", (station_id,))
+
+    def seed_radio_stations(self):
+        """Seed default radio stations if table is empty."""
+        with self._conn() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM radio_stations").fetchone()[0]
+            if count == 0:
+                defaults = [
+                    ("romantica", "Radio Romantica", "https://stream.zeno.fm/yn65fsaurfhvv", "Baladas romanticas"),
+                    ("clasica", "Radio Clasica", "https://stream.zeno.fm/4d60am6ar1zuv", "Musica clasica"),
+                    ("noticias", "Radio Formula", "https://stream.zeno.fm/s850mfsp3fhvv", "Noticias Mexico"),
+                    ("ranchera", "Radio Ranchera", "https://stream.zeno.fm/e0n1fdaurfhvv", "Musica mexicana"),
+                    ("instrumental", "Radio Instrumental", "https://stream.zeno.fm/0r0xa792kwzuv", "Piano y guitarra"),
+                ]
+                for key, name, url, desc in defaults:
+                    conn.execute(
+                        "INSERT INTO radio_stations (key, name, url, description) VALUES (?, ?, ?, ?)",
+                        (key, name, url, desc),
+                    )
+                log.info("Estaciones de radio default cargadas (%d)", len(defaults))

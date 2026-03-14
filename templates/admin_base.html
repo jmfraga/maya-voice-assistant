@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Maya Admin{% block title_extra %}{% endblock %}</title>
+    <link rel="icon" type="image/png" href="/static/favicon.png">
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #e8e8e8; }
@@ -64,10 +65,12 @@
 </head>
 <body>
     <nav class="nav">
+        <img src="/static/logo.png" alt="Maya" style="height:32px;border-radius:6px">
         <span class="nav-brand">Maya Admin</span>
         <a href="/" {% if request.path == '/' %}class="active"{% endif %}>Inicio</a>
         <a href="/pending" {% if request.path == '/pending' %}class="active"{% endif %}>Contactos</a>
         {% if current_role == 'admin' %}
+        <a href="/radio" {% if request.path == '/radio' %}class="active"{% endif %}>Radio</a>
         <a href="/settings" {% if request.path == '/settings' %}class="active"{% endif %}>Configuracion</a>
         <a href="/admin-users" {% if request.path == '/admin-users' %}class="active"{% endif %}>Usuarios Admin</a>
         {% endif %}

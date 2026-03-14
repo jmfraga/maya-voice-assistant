@@ -1,0 +1,64 @@
+{% extends "admin_base.html" %}
+{% block title_extra %} - Radio{% endblock %}
+{% block content %}
+<div class="card">
+    <h2>Estaciones de Radio (max 5)</h2>
+
+    {% if stations %}
+    <table>
+        <tr><th>Clave</th><th>Nombre</th><th>URL</th><th>Descripcion</th><th>Activa</th><th></th></tr>
+        {% for s in stations %}
+        <tr>
+            <form method="post" action="/radio/edit/{{ s.id }}">
+                <td><input name="key" value="{{ s.key }}" style="width:80px" required></td>
+                <td><input name="name" value="{{ s.name }}" style="width:100%" required></td>
+                <td><input name="url" value="{{ s.url }}" style="width:100%" required></td>
+                <td><input name="description" value="{{ s.description or '' }}" style="width:100%"></td>
+                <td style="text-align:center"><input type="checkbox" name="active" value="1" {{ 'checked' if s.active else '' }}></td>
+                <td class="actions">
+                    <button type="submit" class="btn btn-primary btn-small">Guardar</button>
+            </form>
+            <form method="post" action="/radio/delete/{{ s.id }}" style="display:inline"
+                  onsubmit="return confirm('Eliminar {{ s.name }}?')">
+                <button type="submit" class="btn btn-danger btn-small">X</button>
+            </form>
+                </td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p style="color:#8899aa">No hay estaciones configuradas.</p>
+    {% endif %}
+</div>
+
+{% if stations|length < 5 %}
+<div class="card">
+    <h2>Agregar estacion</h2>
+    <form method="post" action="/radio/add">
+        <div class="form-row">
+            <div class="form-group">
+                <label>Clave (sin espacios)</label>
+                <input name="key" required placeholder="romantica">
+            </div>
+            <div class="form-group">
+                <label>Nombre</label>
+                <input name="name" required placeholder="Radio Romantica">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group" style="flex:2">
+                <label>URL del stream</label>
+                <input name="url" required placeholder="https://stream.example.com/radio">
+            </div>
+            <div class="form-group">
+                <label>Descripcion</label>
+                <input name="description" placeholder="Baladas en espanol">
+            </div>
+        </div>
+        <button type="submit" class="btn btn-primary">Agregar</button>
+    </form>
+</div>
+{% else %}
+<p style="color:#8899aa; margin:1rem">Maximo 5 estaciones alcanzado. Elimina una para agregar otra.</p>
+{% endif %}
+{% endblock %}

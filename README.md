@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="static/logo.png" alt="Maya" width="120">
+</p>
+
 # Maya - Asistente de Voz
 
 Asistente de voz diseñada para personas mayores, ejecutándose en Raspberry Pi 5 con pantalla táctil DSI y bocina/micrófono Bluetooth.

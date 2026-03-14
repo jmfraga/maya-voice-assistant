@@ -609,17 +609,21 @@ class Display:
         self._show_screen(screen_name)
 
     def _play_radio(self, station_key: str):
-        """Play a radio station from the screen."""
-        if self.radio:
-            name = self.radio.play(station_key)
-            if name:
-                self.set_radio(name)
+        """Play a radio station from the screen (in background thread)."""
+        def _do():
+            if self.radio:
+                name = self.radio.play(station_key)
+                if name:
+                    self.set_radio(name)
+        threading.Thread(target=_do, daemon=True).start()
 
     def _stop_radio_from_screen(self):
         """Stop radio from the radio screen."""
-        if self.radio:
-            self.radio.stop()
-        self.set_radio(None)
+        def _do():
+            if self.radio:
+                self.radio.stop()
+            self.set_radio(None)
+        threading.Thread(target=_do, daemon=True).start()
 
     def _build_medications_screen(self, user_id: str):
         """Build medications list screen for a user."""
