@@ -81,6 +81,7 @@ from telegram_bot import TelegramBot
 from display import Display
 from weather import Weather
 from admin import start_admin
+from search import Search
 
 # --- Globals ---
 running = True
@@ -284,7 +285,7 @@ def _handle_treatment_query(action: dict, user_id: str, db: Database,
 
 
 def execute_actions(actions: list[dict], user_id: str, db: Database,
-                    telegram: TelegramBot, llm=None) -> list[str]:
+                    telegram: TelegramBot, llm=None, search=None) -> list[str]:
     """Execute parsed actions from LLM response. Returns list of result messages."""
     results = []
     for action in actions:
@@ -366,6 +367,17 @@ def execute_actions(actions: list[dict], user_id: str, db: Database,
                     if not sent:
                         results.append("No hay Telegram configurado para enviar el mensaje")
 
+            elif atype == "BUSCAR":
+                query = action.get("query", "")
+                if search and query:
+                    answer = search.query(query)
+                    if answer:
+                        results.append(f"__SEARCH__:{answer}")
+                    else:
+                        results.append("No pude encontrar informacion sobre eso")
+                else:
+                    results.append("Busqueda no disponible")
+
             elif atype == "CONSULTA_TRATAMIENTO":
                 _handle_treatment_query(action, user_id, db, telegram, results)
 
@@ -409,8 +421,121 @@ def _check_medication_reminders(db: Database, tts: TTS, display: Display):
                             os.unlink(audio_path)
 
 
-def reminder_thread(db: Database, tts: TTS, display: Display):
-    """Background thread that checks for due reminders and medications every 30s."""
+def generate_weekly_report(db: Database, user_id: str) -> str:
+    """Generate a weekly health report for a user (HTML for Telegram)."""
+    user = db.get_user(user_id)
+    name = user["real_name"] if user else user_id
+    now = datetime.now()
+    week_ago = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+
+    lines = [f"<b>Reporte semanal de {name}</b>",
+             f"Periodo: {week_ago} al {now.strftime('%Y-%m-%d')}\n"]
+
+    # Medications taken
+    med_log = db.get_medication_log(user_id, date=None)
+    week_entries = [m for m in med_log if m["taken_at"] >= week_ago]
+    meds = db.get_medications(user_id)
+    if meds:
+        lines.append("<b>Medicamentos:</b>")
+        for med in meds:
+            count = sum(1 for e in week_entries if e["medication_id"] == med["id"])
+            lines.append(f"  - {med['name']}: {count} tomas registradas")
+    else:
+        lines.append("Sin medicamentos registrados.")
+
+    # Measurements (treatment schemas)
+    schemas = db.get_treatment_schemas(user_id)
+    for schema in schemas:
+        measurements = db.get_measurement_log(user_id, schema_id=schema["id"], limit=50)
+        week_meas = [m for m in measurements if m["measured_at"] >= week_ago]
+        if week_meas:
+            values = [m["measurement_value"] for m in week_meas]
+            alerts = sum(1 for m in week_meas if m.get("alert_sent"))
+            lines.append(f"\n<b>{schema['name']}:</b>")
+            lines.append(f"  {len(week_meas)} mediciones, "
+                         f"rango {min(values):.0f}-{max(values):.0f} {schema['measurement_unit']}")
+            if alerts:
+                lines.append(f"  {alerts} alerta(s) fuera de rango")
+
+    # Conversations count
+    convos = db.get_recent_conversations(user_id, limit=200)
+    week_convos = [c for c in convos if c.get("created_at", "") >= week_ago]
+    user_msgs = sum(1 for c in week_convos if c["role"] == "user")
+    lines.append(f"\n<b>Interacciones:</b> {user_msgs} conversaciones esta semana")
+
+    # Reminders
+    reminders = db.get_all_active_reminders()
+    user_rems = [r for r in reminders if r["user_id"] == user_id]
+    if user_rems:
+        lines.append(f"<b>Recordatorios activos:</b> {len(user_rems)}")
+
+    return "\n".join(lines)
+
+
+def _send_weekly_reports(db: Database, telegram: "TelegramBot"):
+    """Send weekly health reports to all contacts. Called Sunday at 10am."""
+    now = datetime.now()
+    if now.weekday() != 6 or now.hour != 10 or now.minute > 1:
+        return
+
+    for user in db.get_users():
+        user_id = user["id"]
+        report = generate_weekly_report(db, user_id)
+        # Send to all contacts of this user
+        contacts = db.get_contacts(user_id)
+        for c in contacts:
+            if c.get("telegram_chat_id"):
+                telegram.send_to_chat_id(c["telegram_chat_id"], report)
+                log.info("Reporte semanal de %s enviado a %s", user_id, c["name"])
+    log.info("Reportes semanales enviados")
+
+
+def _check_user_activity(db: Database, tts: TTS, display: Display):
+    """Check if any user hasn't interacted in a while. Proactive wellness check."""
+    now = datetime.now()
+    # Only during daytime (9am - 8pm)
+    if now.hour < 9 or now.hour >= 20:
+        return
+
+    for user in db.get_users():
+        user_id = user["id"]
+        user_name = user["real_name"]
+        convos = db.get_recent_conversations(user_id, limit=1)
+        if not convos:
+            continue
+        last = convos[0]
+        last_time = last.get("created_at", "")
+        if not last_time:
+            continue
+        try:
+            last_dt = datetime.fromisoformat(last_time)
+        except (ValueError, TypeError):
+            continue
+        hours_since = (now - last_dt).total_seconds() / 3600
+        # If more than 8 hours since last interaction during daytime
+        if hours_since >= 8:
+            # Only nudge once per day — check if we already nudged today
+            today = now.strftime("%Y-%m-%d")
+            recent = db.get_recent_conversations(user_id, limit=5)
+            already_nudged = any(
+                "__WELLNESS__" in c.get("content", "") and
+                c.get("created_at", "").startswith(today)
+                for c in recent if c["role"] == "assistant"
+            )
+            if not already_nudged:
+                msg = f"{user_name}, lleva un rato sin platicar conmigo. Todo bien? Aqui estoy si necesita algo."
+                log.info("Wellness check: %s (%.1f horas sin interaccion)", user_name, hours_since)
+                display.set_status("Saludando", "#4ecca3")
+                display.set_response(msg)
+                audio_path = tts.speak(msg)
+                if audio_path:
+                    play_audio(audio_path)
+                    os.unlink(audio_path)
+                db.save_conversation(user_id, "assistant", f"__WELLNESS__ {msg}")
+
+
+def reminder_thread(db: Database, tts: TTS, display: Display, telegram=None):
+    """Background thread that checks for due reminders, medications, activity, and reports every 30s."""
     while running:
         try:
             due = db.get_due_reminders()
@@ -431,6 +556,17 @@ def reminder_thread(db: Database, tts: TTS, display: Display):
             _check_medication_reminders(db, tts, display)
         except Exception as e:
             log.error("Error en medication reminders: %s", e)
+
+        try:
+            _check_user_activity(db, tts, display)
+        except Exception as e:
+            log.error("Error en activity check: %s", e)
+
+        if telegram:
+            try:
+                _send_weekly_reports(db, telegram)
+            except Exception as e:
+                log.error("Error en weekly reports: %s", e)
 
         # Sleep in small increments so we can exit quickly
         for _ in range(30):
@@ -887,6 +1023,11 @@ def main():
         BASE_DIR,
     )
 
+    # Search (Perplexity)
+    search = Search(config.get("search", {}))
+    if search.enabled:
+        log.info("Busqueda habilitada (Perplexity)")
+
     # Weather
     weather_cfg = config.get("weather", {})
     weather = Weather(
@@ -943,9 +1084,9 @@ def main():
         log.error("Error inicializando wake word: %s", e)
         log.info("Modo tap-to-talk (sin wake word)")
 
-    # Start reminder thread
+    # Start reminder thread (includes med reminders, activity check, weekly reports)
     rem_thread = threading.Thread(
-        target=reminder_thread, args=(db, tts, display), daemon=True,
+        target=reminder_thread, args=(db, tts, display, telegram), daemon=True,
     )
     rem_thread.start()
 
@@ -1106,10 +1247,14 @@ def main():
             response_text, actions = llm.chat(text, user_name, db, user_id, weather=weather)
 
             # h. Execute actions
+            search_answer = None
             if actions:
-                action_results = execute_actions(actions, user_id or "unknown", db, telegram, llm=llm)
+                action_results = execute_actions(actions, user_id or "unknown", db, telegram, llm=llm, search=search)
                 for r in action_results:
-                    log.info("Accion: %s", r)
+                    if r.startswith("__SEARCH__:"):
+                        search_answer = r[len("__SEARCH__:"):]
+                    else:
+                        log.info("Accion: %s", r)
 
             # i. TTS response
             display.set_status("Hablando...", "#e94560")
@@ -1119,6 +1264,17 @@ def main():
             if tts_path:
                 play_audio(tts_path)
                 os.unlink(tts_path)
+
+            # i2. Speak search results if any
+            if search_answer:
+                display.set_status("Resultado de busqueda", "#3498DB")
+                display.set_response(search_answer)
+                search_path = tts.speak(search_answer)
+                if search_path:
+                    play_audio(search_path)
+                    os.unlink(search_path)
+                if user_id:
+                    db.save_conversation(user_id, "assistant", f"[Busqueda] {search_answer}")
 
             # Save assistant response
             if user_id:
@@ -1167,10 +1323,14 @@ def main():
                 display.set_status("Pensando...", "#f0a500")
                 fw_response, fw_actions = llm.chat(fw_text, user_name, db, user_id, weather=weather)
 
+                fw_search = None
                 if fw_actions:
-                    fw_results = execute_actions(fw_actions, user_id or "unknown", db, telegram, llm=llm)
+                    fw_results = execute_actions(fw_actions, user_id or "unknown", db, telegram, llm=llm, search=search)
                     for r in fw_results:
-                        log.info("Accion follow-up ronda %d: %s", followup_round, r)
+                        if r.startswith("__SEARCH__:"):
+                            fw_search = r[len("__SEARCH__:"):]
+                        else:
+                            log.info("Accion follow-up ronda %d: %s", followup_round, r)
 
                 display.set_status("Hablando...", "#e94560")
                 display.set_response(fw_response)
@@ -1178,6 +1338,15 @@ def main():
                 if fw_tts:
                     play_audio(fw_tts)
                     os.unlink(fw_tts)
+
+                if fw_search:
+                    display.set_response(fw_search)
+                    fw_search_path = tts.speak(fw_search)
+                    if fw_search_path:
+                        play_audio(fw_search_path)
+                        os.unlink(fw_search_path)
+                    if user_id:
+                        db.save_conversation(user_id, "assistant", f"[Busqueda] {fw_search}")
 
                 if user_id:
                     db.save_conversation(user_id, "assistant", fw_response)

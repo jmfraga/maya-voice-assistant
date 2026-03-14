@@ -34,7 +34,13 @@ Asistente de voz diseñada para personas mayores, ejecutándose en Raspberry Pi 
 - **Memoria inteligente**: Guardado con deduplicación y manejo de contradicciones vía LLM
 - **Consolidación nocturna**: Cron a las 3am deduplica memorias
 - **Clima**: OpenWeatherMap inyectado en contexto LLM
-- **Acciones**: Tags [ACCION:...] parsedos desde respuesta LLM (medicamento, recordatorio, telegram, memoria, contacto, tratamiento)
+- **Búsqueda en internet**: Perplexity API para preguntas que Maya no sabe (noticias, datos actuales, tipo de cambio, etc.)
+- **Acciones**: Tags [ACCION:...] parseados desde respuesta LLM (medicamento, recordatorio, telegram, memoria, contacto, tratamiento, buscar)
+- **Entretenimiento**: Chistes, trivias, cuentos, adivinanzas — generados por el LLM, apropiados para adultos mayores
+
+### Bienestar
+- **Reportes semanales**: Resumen de salud enviado a familiares por Telegram cada domingo (medicamentos, mediciones, interacciones)
+- **Monitoreo de actividad**: Maya pregunta proactivamente si el usuario lleva mucho sin interactuar (8+ horas en horario diurno)
 
 ### UX para adultos mayores
 - **Onboarding 8 pasos**: Bienvenida, nombre, wake word, voiceprint, sobre ti, medicamentos, demo, despedida
@@ -64,6 +70,7 @@ Asistente de voz diseñada para personas mayores, ejecutándose en Raspberry Pi 
 | `telegram_bot.py` | Bot de Telegram: auto-registro, chat directo, notas de voz |
 | `display.py` | Interfaz gráfica Tkinter para pantalla DSI |
 | `admin.py` | Panel de administración web (Flask, puerto 8085) |
+| `search.py` | Búsqueda en internet via Perplexity API |
 | `consolidate_memories.py` | Cron nocturno: deduplicación de memorias via LLM |
 | `scripts/backup_sd.sh` | Clonación diaria de SD a USB de respaldo |
 | `scripts/telegram_notify.sh` | Notificaciones Telegram desde scripts de sistema |

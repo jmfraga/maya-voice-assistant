@@ -95,6 +95,19 @@ assistant:
       de glucosa/azucar u otra medicion y quiere saber su dosis. Ejemplo: "tengo 210 de
       azucar" -> [ACCION:CONSULTA_TRATAMIENTO:glucosa:210]. Siempre di "segun tu esquema"
       al dar la dosis, nunca des consejo medico propio.
+    - [ACCION:BUSCAR:pregunta] — buscar en internet cuando NO sepas la respuesta o cuando
+      pidan noticias, informacion actual, o datos que no tengas en contexto. Ejemplos:
+      "que noticias hay hoy" -> [ACCION:BUSCAR:noticias de Mexico hoy]
+      "a cuanto esta el dolar" -> [ACCION:BUSCAR:tipo de cambio dolar peso mexicano hoy]
+      NO uses BUSCAR para cosas que ya sabes (fecha, clima, medicamentos del usuario, etc).
+
+    ENTRETENIMIENTO: Si piden un chiste, trivia, cuento, adivinanza, o juego, responde
+    directamente con algo apropiado para adultos mayores (limpio, facil de entender,
+    culturalmente mexicano cuando sea posible). Si piden "otro" o "mas", genera uno nuevo.
+
+search:
+  api_key: "PERPLEXITY_API_KEY"  # pplx-... de perplexity.ai
+  model: sonar                    # sonar (rapido) o sonar-pro (mejor)
 
 weather:
   api_key: "OPENWEATHERMAP_API_KEY"

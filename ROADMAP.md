@@ -125,23 +125,24 @@
 
 ---
 
-## Sprint 5: Internet + Entretenimiento
+## Sprint 5: Internet + Entretenimiento — EN PROGRESO (2026-03-14)
 
 ### Busquedas en internet
-- [ ] Perplexity API via Synapse para preguntas que Maya no sabe
-- [ ] Accion [ACCION:BUSCAR:query] para disparar busqueda
-- [ ] Respuesta con fuentes resumidas
+- [x] Perplexity API (search.py) — modulo nuevo, OpenAI-compatible
+- [x] Accion [ACCION:BUSCAR:query] en parser + execute_actions
+- [x] Resultado hablado por TTS despues de la respuesta principal
+- [x] System prompt con instrucciones de cuando usar BUSCAR
 
 ### Entretenimiento
-- [ ] Chistes, trivias, cuentos (prompts especializados)
-- [ ] Noticias del dia (RSS o API de noticias)
+- [x] Chistes, trivias, cuentos (instrucciones en system_prompt, LLM genera directamente)
+- [x] Noticias del dia via BUSCAR (el LLM usa Perplexity cuando piden noticias)
 - [ ] Radio/musica (streams de radio mexicana via PipeWire)
-- [ ] Juegos de memoria / estimulacion cognitiva
+- [ ] Juegos de memoria / estimulacion cognitiva (interactivos)
 
 ### Salud y bienestar
-- [ ] Reportes semanales de salud (meds tomadas, mediciones, alertas) via Telegram
+- [x] Reportes semanales de salud via Telegram (domingos 10am, a todos los contactos)
 - [ ] Deteccion de estado de animo por voz (tono, velocidad)
-- [ ] Sugerencias de actividad: "llevas mucho sin hablarme, todo bien?"
+- [x] Sugerencias de actividad: "llevas mucho sin hablarme, todo bien?" (8+ horas, 9am-8pm)
 
 ---
 

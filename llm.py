@@ -51,6 +51,8 @@ def parse_actions(text: str) -> tuple[str, list[dict]]:
                 action["value"] = parts[2].strip()
             elif action["type"] == "MENSAJE_PENDIENTE" and len(parts) >= 2:
                 action["message"] = ":".join(parts[1:]).strip()
+            elif action["type"] == "BUSCAR" and len(parts) >= 2:
+                action["query"] = ":".join(parts[1:]).strip()
             actions.append(action)
 
     clean = ACTION_PATTERN.sub("", text).strip()
