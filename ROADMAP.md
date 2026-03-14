@@ -215,6 +215,29 @@
 
 ---
 
+## Sprint 8: Proactividad Inteligente
+
+### Tono de fin de respuesta
+- [ ] Sonido suave al terminar de hablar (reduce incertidumbre de "ya termino?")
+
+### Watchdog de audio
+- [ ] Verificar rutinariamente que mic y altavoz BT estan activos
+- [ ] Si no responden, reconectar automaticamente (bluetoothctl + pw-play test)
+- [ ] Log/alerta si falla tras N reintentos
+
+### Aprendizaje de patrones de rutina
+- [ ] Registrar timestamps de acciones del usuario (radio, medicamentos, clima, etc.) en DB
+- [ ] Heuristicas simples: clustering por ventana de tiempo, frecuencia ultimos N dias
+- [ ] Cuando un patron se detecta consistentemente, Maya sugiere proactivamente:
+  - "Quieres que ponga la radio?" (si siempre pone radio ~9am)
+  - "Te recuerdo tu medicina?" (si siempre pregunta ~8:30)
+  - "Llamamos a alguien?" (si siempre llama los domingos)
+- [ ] Sugerencias siempre opcionales, nunca acciones automaticas
+- [ ] Almacenamiento ligero en SQLite (sin ML pesado)
+- [ ] Configurable: activar/desactivar sugerencias por usuario desde admin
+
+---
+
 ## Ideas a Futuro
 
 - [ ] Camara: reconocimiento facial como complemento a voiceprint
