@@ -136,8 +136,9 @@
 ### Entretenimiento
 - [x] Chistes, trivias, cuentos (instrucciones en system_prompt, LLM genera directamente)
 - [x] Noticias del dia via BUSCAR (el LLM usa Perplexity cuando piden noticias)
-- [ ] Radio/musica (streams de radio mexicana via PipeWire)
-- [ ] Juegos de memoria / estimulacion cognitiva (interactivos)
+- [x] Radio/musica: 5 estaciones (romantica, clasica, noticias, ranchera, instrumental) via ffplay/PipeWire
+- [x] Radio se pausa al hablar con Maya y reanuda al terminar
+- [x] Juegos de memoria / estimulacion cognitiva via system_prompt (LLM lleva el juego conversacionalmente)
 
 ### Salud y bienestar
 - [x] Reportes semanales de salud via Telegram (domingos 10am, a todos los contactos)

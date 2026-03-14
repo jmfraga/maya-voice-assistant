@@ -82,6 +82,7 @@ from display import Display
 from weather import Weather
 from admin import start_admin
 from search import Search
+from radio import Radio
 
 # --- Globals ---
 running = True
@@ -285,7 +286,8 @@ def _handle_treatment_query(action: dict, user_id: str, db: Database,
 
 
 def execute_actions(actions: list[dict], user_id: str, db: Database,
-                    telegram: TelegramBot, llm=None, search=None) -> list[str]:
+                    telegram: TelegramBot, llm=None, search=None,
+                    radio=None) -> list[str]:
     """Execute parsed actions from LLM response. Returns list of result messages."""
     results = []
     for action in actions:
@@ -366,6 +368,20 @@ def execute_actions(actions: list[dict], user_id: str, db: Database,
 
                     if not sent:
                         results.append("No hay Telegram configurado para enviar el mensaje")
+
+            elif atype == "RADIO":
+                station = action.get("station", "")
+                if radio:
+                    if station.lower() in ("apagar", "parar", "stop", "off"):
+                        radio.stop()
+                        results.append("Radio apagada")
+                    else:
+                        name = radio.play(station)
+                        if name:
+                            results.append(f"Poniendo {name}")
+                        else:
+                            available = ", ".join(s["key"] for s in radio.list_stations())
+                            results.append(f"No encontre esa estacion. Disponibles: {available}")
 
             elif atype == "BUSCAR":
                 query = action.get("query", "")
@@ -1030,6 +1046,9 @@ def main():
     if search.enabled:
         log.info("Busqueda habilitada (Perplexity)")
 
+    # Radio
+    radio = Radio()
+
     # Weather
     weather_cfg = config.get("weather", {})
     weather = Weather(
@@ -1158,7 +1177,12 @@ def main():
             display.show_conversation()
             display.enable_talk_btn(False)
 
-            # b. Play acknowledgment chime
+            # b. Pause radio if playing (so mic doesn't pick it up)
+            radio_was_playing = radio.current_station
+            if radio_was_playing:
+                radio.stop()
+
+            # b2. Play acknowledgment chime
             ack_sound = os.path.join(sounds_dir, "wake_ack.wav")
             if os.path.isfile(ack_sound):
                 play_audio(ack_sound)
@@ -1251,7 +1275,7 @@ def main():
             # h. Execute actions
             search_answer = None
             if actions:
-                action_results = execute_actions(actions, user_id or "unknown", db, telegram, llm=llm, search=search)
+                action_results = execute_actions(actions, user_id or "unknown", db, telegram, llm=llm, search=search, radio=radio)
                 for r in action_results:
                     if r.startswith("__SEARCH__:"):
                         search_answer = r[len("__SEARCH__:"):]
@@ -1357,6 +1381,10 @@ def main():
             # Return to main screen after conversation ends
             display.active_user_id = None
             display.show_main()
+
+            # Resume radio if it was playing before the conversation
+            if radio_was_playing and not radio.playing:
+                radio.play(radio_was_playing)
 
         except Exception as e:
             log.error("Error en loop principal: %s", e, exc_info=True)

@@ -36,7 +36,8 @@ Asistente de voz diseñada para personas mayores, ejecutándose en Raspberry Pi 
 - **Clima**: OpenWeatherMap inyectado en contexto LLM
 - **Búsqueda en internet**: Perplexity API para preguntas que Maya no sabe (noticias, datos actuales, tipo de cambio, etc.)
 - **Acciones**: Tags [ACCION:...] parseados desde respuesta LLM (medicamento, recordatorio, telegram, memoria, contacto, tratamiento, buscar)
-- **Entretenimiento**: Chistes, trivias, cuentos, adivinanzas — generados por el LLM, apropiados para adultos mayores
+- **Entretenimiento**: Chistes, trivias, cuentos, adivinanzas, juegos de memoria — generados por el LLM, apropiados para adultos mayores
+- **Radio**: 5 estaciones de internet (romantica, clasica, noticias, ranchera, instrumental) via ffplay/PipeWire. Se pausa automaticamente al hablar con Maya
 
 ### Bienestar
 - **Reportes semanales**: Resumen de salud enviado a familiares por Telegram cada domingo (medicamentos, mediciones, interacciones)
@@ -71,6 +72,7 @@ Asistente de voz diseñada para personas mayores, ejecutándose en Raspberry Pi 
 | `display.py` | Interfaz gráfica Tkinter para pantalla DSI |
 | `admin.py` | Panel de administración web (Flask, puerto 8085) |
 | `search.py` | Búsqueda en internet via Perplexity API |
+| `radio.py` | Radio por internet: 5 estaciones mexicanas via ffplay |
 | `consolidate_memories.py` | Cron nocturno: deduplicación de memorias via LLM |
 | `scripts/backup_sd.sh` | Clonación diaria de SD a USB de respaldo |
 | `scripts/telegram_notify.sh` | Notificaciones Telegram desde scripts de sistema |
