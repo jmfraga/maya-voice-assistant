@@ -671,6 +671,74 @@ def _extract_with_llm(llm, question: str, raw_answer: str) -> str:
 HEALTH_CATEGORIES = {"salud", "medicamento", "enfermedad", "alergia", "condicion",
                      "tratamiento", "diagnostico"}
 
+# --- Mood detection ---
+_mood_tracker: dict[str, list[str]] = {}  # user_id -> last N moods
+
+
+def analyze_mood(audio: "np.ndarray", text: str, sample_rate: int = 16000) -> str:
+    """Analyze mood from audio features and text. Returns mood label."""
+    import numpy as np
+
+    mood = "normal"
+
+    # Audio features
+    audio_flat = audio.flatten().astype(np.float32)
+    rms = np.sqrt(np.mean(audio_flat ** 2))
+    duration = len(audio_flat) / sample_rate
+
+    # Very quiet + short = possibly low energy / sad
+    if rms < 200 and duration < 2.0:
+        mood = "bajo"
+
+    # Text analysis (simple keyword matching)
+    lower = text.lower() if text else ""
+    sad_words = {"triste", "mal", "solo", "sola", "cansado", "cansada", "dolor",
+                 "no puedo", "no quiero", "aburrido", "aburrida", "llore", "llorar",
+                 "extraño", "miedo", "preocupado", "preocupada", "deprimido", "deprimida"}
+    anxious_words = {"nervioso", "nerviosa", "ansiedad", "angustia", "asustado",
+                     "asustada", "no duermo", "insomnio", "temblor", "mareo"}
+    happy_words = {"bien", "contento", "contenta", "feliz", "alegre", "bonito",
+                   "excelente", "perfecto", "genial", "maravilloso"}
+
+    if any(w in lower for w in sad_words):
+        mood = "triste"
+    elif any(w in lower for w in anxious_words):
+        mood = "ansioso"
+    elif any(w in lower for w in happy_words) and mood == "normal":
+        mood = "contento"
+
+    return mood
+
+
+def _track_mood(user_id: str, mood: str, db: Database, telegram: "TelegramBot"):
+    """Track mood over time. Alert family if concerning pattern detected."""
+    if user_id not in _mood_tracker:
+        _mood_tracker[user_id] = []
+
+    _mood_tracker[user_id].append(mood)
+    # Keep last 5
+    _mood_tracker[user_id] = _mood_tracker[user_id][-5:]
+
+    recent = _mood_tracker[user_id]
+    concerning = {"triste", "bajo", "ansioso"}
+
+    # Alert if 3+ of last 5 are concerning
+    concerning_count = sum(1 for m in recent if m in concerning)
+    if concerning_count >= 3:
+        user = db.get_user(user_id)
+        name = user["real_name"] if user else user_id
+        mood_str = ", ".join(recent[-3:])
+        alert = (f"Aviso sobre {name}: sus ultimas interacciones muestran "
+                 f"un patron de animo bajo ({mood_str}). "
+                 f"Podria ser bueno comunicarse con {'ella' if name.endswith('a') else 'el'}.")
+        contacts = db.get_contacts(user_id)
+        for c in contacts:
+            if c.get("telegram_chat_id"):
+                telegram.send_to_chat_id(c["telegram_chat_id"], alert)
+        log.info("Alerta de animo enviada para %s: %s", name, mood_str)
+        # Reset tracker to avoid repeated alerts
+        _mood_tracker[user_id] = []
+
 
 def _smart_save_memory(llm, db, user_id: str, category: str, new_content: str,
                        telegram=None):
@@ -1100,6 +1168,7 @@ def main():
         config=config, db=db, weather=weather,
         on_close=on_exit_pressed, on_talk=on_talk_pressed,
         on_user_talk=on_user_talk, on_radio_stop=on_radio_stop,
+        radio=radio,
     )
     display.start()
     time.sleep(0.5)  # Let display init
@@ -1272,6 +1341,16 @@ def main():
             # f. Show transcript
             display.set_transcript(text)
             log.info("Transcripcion: %s", text)
+
+            # f2. Mood analysis
+            try:
+                mood = analyze_mood(audio, text, audio_cfg.get("sample_rate", 16000))
+                if mood != "normal":
+                    log.info("Animo detectado: %s (%s)", mood, user_name)
+                if user_id:
+                    _track_mood(user_id, mood, db, telegram)
+            except Exception as e:
+                log.warning("Error en mood analysis: %s", e)
 
             # Save user message
             if user_id:

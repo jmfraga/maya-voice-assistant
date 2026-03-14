@@ -69,7 +69,7 @@ class Display:
 
     def __init__(self, config: dict, db=None, weather=None,
                  on_close=None, on_talk=None, on_user_talk=None,
-                 on_radio_stop=None):
+                 on_radio_stop=None, radio=None):
         self.queue = queue.Queue()
         self.config = config
         self.db = db
@@ -78,6 +78,7 @@ class Display:
         self.on_talk = on_talk
         self.on_user_talk = on_user_talk  # callback(user_id)
         self.on_radio_stop = on_radio_stop  # callback() to stop radio
+        self.radio = radio  # Radio instance from main
         self.root = None
         self._thread = None
         self._running = False
@@ -494,6 +495,8 @@ class Display:
              lambda u=user_id: self._show_reminders(u)),
             ("Tratamiento", "\U0001F489", "#16A085",
              lambda u=user_id: self._show_treatments(u)),
+            ("Radio", "\u266B", "#2C3E50",
+             lambda u=user_id: self._show_radio_screen()),
             ("Repetir\nintro" if self.db and self.db.is_onboarded(user_id)
              else "Conoce a\nMaya", "\u2B50", ACCENT,
              lambda u=user_id: self._start_onboarding(u)),
@@ -529,6 +532,94 @@ class Display:
 
             for w in [btn, icon_lbl, text_lbl]:
                 w.bind("<Button-1>", lambda e, c=cmd: c())
+
+    def _show_radio_screen(self):
+        """Build and show radio station picker screen."""
+        screen_name = "radio"
+        if screen_name in self._screens:
+            self._screens[screen_name].destroy()
+
+        from radio import STATIONS
+
+        f = tk.Frame(self._container, bg=BG)
+        f.place(x=0, y=0, width=W, height=H)
+        self._screens[screen_name] = f
+
+        # Header
+        header = tk.Frame(f, bg="#2C3E50", height=self.y(55))
+        header.place(x=0, y=0, width=W, height=self.y(55))
+
+        back_btn = tk.Label(
+            header, text="\u2190 Inicio", font=("Helvetica", self.fs(16), "bold"),
+            fg="white", bg="#2C3E50", cursor="hand2",
+        )
+        back_btn.place(x=self.x(15), y=self.y(10), height=self.y(35))
+        back_btn.bind("<Button-1>", lambda e: self._go_home())
+
+        tk.Label(
+            header, text="\u266B Radio", font=("Helvetica", self.fs(22), "bold"),
+            fg="white", bg="#2C3E50",
+        ).place(relx=0.5, y=self.y(10), anchor="n")
+
+        # Station buttons
+        station_colors = ["#E74C3C", "#3498DB", "#E67E22", "#27AE60", "#8E44AD"]
+        btn_w = self.x(235)
+        btn_h = self.y(80)
+        start_x = self.x(30)
+        start_y = self.y(65)
+        gap_x = self.x(25)
+        gap_y = self.y(10)
+
+        for i, (key, info) in enumerate(STATIONS.items()):
+            col = i % 3
+            row = i // 3
+            bx = start_x + col * (btn_w + gap_x)
+            by = start_y + row * (btn_h + gap_y)
+            color = station_colors[i % len(station_colors)]
+
+            btn = tk.Frame(f, bg=color, cursor="hand2")
+            btn.place(x=bx, y=by, width=btn_w, height=btn_h)
+
+            tk.Label(
+                btn, text=info["name"], font=("Helvetica", self.fs(16), "bold"),
+                fg="white", bg=color,
+            ).place(relx=0.5, y=self.y(12), anchor="n")
+
+            desc_lbl = tk.Label(
+                btn, text=info["desc"], font=("Helvetica", self.fs(12)),
+                fg="#DDDDDD", bg=color,
+            )
+            desc_lbl.place(relx=0.5, y=self.y(45), anchor="n")
+
+            for w in [btn, desc_lbl]:
+                w.bind("<Button-1>", lambda e, k=key: self._play_radio(k))
+
+        # Stop button (big, at bottom)
+        stop_btn = tk.Frame(f, bg=DANGER, cursor="hand2")
+        stop_btn.place(x=self.x(30), y=H - self.y(80), width=W - self.x(60), height=self.y(55))
+
+        stop_lbl = tk.Label(
+            stop_btn, text="Apagar Radio", font=("Helvetica", self.fs(20), "bold"),
+            fg="white", bg=DANGER,
+        )
+        stop_lbl.place(relx=0.5, rely=0.5, anchor="center")
+        for w in [stop_btn, stop_lbl]:
+            w.bind("<Button-1>", lambda e: self._stop_radio_from_screen())
+
+        self._show_screen(screen_name)
+
+    def _play_radio(self, station_key: str):
+        """Play a radio station from the screen."""
+        if self.radio:
+            name = self.radio.play(station_key)
+            if name:
+                self.set_radio(name)
+
+    def _stop_radio_from_screen(self):
+        """Stop radio from the radio screen."""
+        if self.radio:
+            self.radio.stop()
+        self.set_radio(None)
 
     def _build_medications_screen(self, user_id: str):
         """Build medications list screen for a user."""
