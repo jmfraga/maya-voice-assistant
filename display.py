@@ -68,7 +68,8 @@ class Display:
     """Multi-screen fullscreen display for Maya on DSI touchscreen."""
 
     def __init__(self, config: dict, db=None, weather=None,
-                 on_close=None, on_talk=None, on_user_talk=None):
+                 on_close=None, on_talk=None, on_user_talk=None,
+                 on_radio_stop=None):
         self.queue = queue.Queue()
         self.config = config
         self.db = db
@@ -76,6 +77,7 @@ class Display:
         self.on_close = on_close
         self.on_talk = on_talk
         self.on_user_talk = on_user_talk  # callback(user_id)
+        self.on_radio_stop = on_radio_stop  # callback() to stop radio
         self.root = None
         self._thread = None
         self._running = False
@@ -206,7 +208,16 @@ class Display:
             alert_frame, text="", font=("Helvetica", self.fs(15)),
             fg=ACCENT, bg=BG, anchor="w",
         )
-        self._alert_right.place(x=self.x(410), y=self.y(5), width=self.x(370), height=self.y(40))
+        self._alert_right.place(x=self.x(410), y=self.y(5), width=self.x(200), height=self.y(40))
+
+        # Radio stop button (hidden by default)
+        self._radio_btn = tk.Label(
+            alert_frame, text="", font=("Helvetica", self.fs(14), "bold"),
+            fg="white", bg=ACCENT, anchor="center", cursor="hand2",
+        )
+        self._radio_btn.place(x=W - self.x(190), y=self.y(5), width=self.x(170), height=self.y(38))
+        self._radio_btn.place_forget()  # hidden initially
+        self._radio_btn.bind("<Button-1>", lambda e: self._on_radio_stop())
 
         # --- Separator ---
         tk.Frame(f, bg="#DDDDDD", height=self.y(2)).place(x=self.x(20), y=self.y(188), width=W - self.x(40), height=self.y(2))
@@ -1746,6 +1757,16 @@ class Display:
             if hasattr(self, "_wifi_dialog_status"):
                 self._wifi_dialog_status.config(text=msg["text"])
 
+        elif kind == "radio":
+            if hasattr(self, "_radio_btn"):
+                station = msg.get("station")
+                if station:
+                    self._radio_btn.config(text=f"Apagar {station}")
+                    self._radio_btn.place(x=W - self.x(190), y=self.y(5),
+                                          width=self.x(170), height=self.y(38))
+                else:
+                    self._radio_btn.place_forget()
+
         elif kind == "listening":
             if msg.get("active"):
                 self._start_listening_animation()
@@ -1762,6 +1783,13 @@ class Display:
                         state="disabled", bg="#88BB88", text="Procesando...")
 
     # ===== EVENT HANDLERS =====
+
+    def _on_radio_stop(self):
+        if self.on_radio_stop:
+            self.on_radio_stop()
+        # Hide the button immediately
+        if hasattr(self, "_radio_btn"):
+            self._radio_btn.place_forget()
 
     def _on_talk_pressed(self):
         if self.on_talk:
@@ -1788,6 +1816,10 @@ class Display:
 
     def set_reminders(self, text: str):
         self.queue.put({"type": "reminders", "text": text})
+
+    def set_radio(self, station: str | None):
+        """Show/hide radio stop button. station=None hides it."""
+        self.queue.put({"type": "radio", "station": station})
 
     def set_listening(self, active: bool):
         self.queue.put({"type": "listening", "active": active})

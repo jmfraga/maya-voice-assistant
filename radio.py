@@ -69,9 +69,10 @@ class Radio:
         self.stop()
 
         try:
-            # ffplay: no video, low log level, autoexit disabled for streaming
+            # ffplay: no video, low volume (30%) so wake word still works
             self._process = subprocess.Popen(
-                ["ffplay", "-nodisp", "-loglevel", "error", station["url"]],
+                ["ffplay", "-nodisp", "-loglevel", "error",
+                 "-volume", "30", station["url"]],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )

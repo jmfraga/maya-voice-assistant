@@ -375,10 +375,12 @@ def execute_actions(actions: list[dict], user_id: str, db: Database,
                     if station.lower() in ("apagar", "parar", "stop", "off"):
                         radio.stop()
                         results.append("Radio apagada")
+                        results.append("__RADIO_OFF__")
                     else:
                         name = radio.play(station)
                         if name:
                             results.append(f"Poniendo {name}")
+                            results.append(f"__RADIO_ON__:{name}")
                         else:
                             available = ", ".join(s["key"] for s in radio.list_stations())
                             results.append(f"No encontre esa estacion. Disponibles: {available}")
@@ -1087,11 +1089,17 @@ def main():
         user_talk_info["mode"] = mode
         talk_event.set()
 
+    def on_radio_stop():
+        """Called from display radio stop button."""
+        radio.stop()
+        display.set_radio(None)
+        log.info("Radio apagada desde pantalla")
+
     # Display
     display = Display(
         config=config, db=db, weather=weather,
         on_close=on_exit_pressed, on_talk=on_talk_pressed,
-        on_user_talk=on_user_talk,
+        on_user_talk=on_user_talk, on_radio_stop=on_radio_stop,
     )
     display.start()
     time.sleep(0.5)  # Let display init
@@ -1181,6 +1189,7 @@ def main():
             radio_was_playing = radio.current_station
             if radio_was_playing:
                 radio.stop()
+                display.set_radio(None)
 
             # b2. Play acknowledgment chime
             ack_sound = os.path.join(sounds_dir, "wake_ack.wav")
@@ -1279,6 +1288,10 @@ def main():
                 for r in action_results:
                     if r.startswith("__SEARCH__:"):
                         search_answer = r[len("__SEARCH__:"):]
+                    elif r.startswith("__RADIO_ON__:"):
+                        display.set_radio(r[len("__RADIO_ON__:"):])
+                    elif r == "__RADIO_OFF__":
+                        display.set_radio(None)
                     else:
                         log.info("Accion: %s", r)
 
@@ -1351,10 +1364,14 @@ def main():
 
                 fw_search = None
                 if fw_actions:
-                    fw_results = execute_actions(fw_actions, user_id or "unknown", db, telegram, llm=llm, search=search)
+                    fw_results = execute_actions(fw_actions, user_id or "unknown", db, telegram, llm=llm, search=search, radio=radio)
                     for r in fw_results:
                         if r.startswith("__SEARCH__:"):
                             fw_search = r[len("__SEARCH__:"):]
+                        elif r.startswith("__RADIO_ON__:"):
+                            display.set_radio(r[len("__RADIO_ON__:"):])
+                        elif r == "__RADIO_OFF__":
+                            display.set_radio(None)
                         else:
                             log.info("Accion follow-up ronda %d: %s", followup_round, r)
 
@@ -1384,7 +1401,10 @@ def main():
 
             # Resume radio if it was playing before the conversation
             if radio_was_playing and not radio.playing:
-                radio.play(radio_was_playing)
+                from radio import STATIONS
+                name = radio.play(radio_was_playing)
+                if name:
+                    display.set_radio(name)
 
         except Exception as e:
             log.error("Error en loop principal: %s", e, exc_info=True)
