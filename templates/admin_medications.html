@@ -2,19 +2,82 @@
 {% block title_extra %} - Medicamentos{% endblock %}
 {% block content %}
 {% include "admin_user_header.html" %}
+
+<style>
+    .view-controls { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px; }
+    .view-btns { display:flex; gap:6px; }
+    .view-btn { background:#0f3460; }
+    .view-btn.active { background:#4ecca3; color:#1a1a2e; }
+
+    .time-block { margin-bottom:16px; }
+    .time-block-header { padding:10px 16px; border-radius:8px 8px 0 0; font-weight:bold; font-size:1.05em; display:flex; align-items:center; gap:8px; }
+    .time-block-body { background:#16213e; border-radius:0 0 8px 8px; }
+    .block-manana .time-block-header { background:#2d4a1a; color:#8bc34a; }
+    .block-tarde .time-block-header { background:#4a3a1a; color:#ffc107; }
+    .block-noche .time-block-header { background:#1a2a4a; color:#64b5f6; }
+    .block-sin .time-block-header { background:#2a2a2a; color:#8899aa; }
+
+    .med-row { display:flex; align-items:center; gap:12px; padding:10px 16px; border-bottom:1px solid #2a2a4a; }
+    .med-row:last-child { border-bottom:none; }
+    .med-time { color:#4ecca3; font-weight:bold; min-width:50px; font-size:1.05em; }
+    .med-name { flex:1; font-weight:500; }
+    .med-dosage { color:#8899aa; min-width:80px; }
+    .med-notes { color:#666; font-size:0.85em; max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .med-inactive { opacity:0.4; }
+    .med-actions { display:flex; gap:4px; }
+
+    .edit-panel { background:#0f3460; padding:12px 16px; border-bottom:1px solid #2a2a4a; display:none; }
+    .edit-panel .form-row { margin-bottom:8px; }
+
+    .schedule-container { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+    .time-chip { display:inline-flex; align-items:center; gap:2px; background:#0f3460; border-radius:4px; padding:2px 6px; }
+    .time-chip input[type="time"] { background:transparent; border:none; color:#e8e8e8; font-size:0.95em; width:110px; padding:4px; }
+    .time-chip input[type="time"]:focus { outline:1px solid #4ecca3; border-radius:2px; }
+    .time-chip .remove-time { color:#e94560; cursor:pointer; background:none; border:none; font-size:1.1em; padding:0 2px; line-height:1; }
+    .time-chip .remove-time:hover { color:#ff6b81; }
+
+    .meal-btns { display:flex; gap:4px; flex-wrap:wrap; margin-top:4px; }
+    .meal-btn { background:#2a2a4a; font-size:0.78em; padding:3px 8px; }
+    .meal-btn:hover { background:#3a3a5a; }
+
+    .chrono-empty { color:#8899aa; padding:20px; text-align:center; }
+</style>
+
+<!-- View controls -->
+<div class="view-controls">
+    <div class="view-btns">
+        <button class="btn btn-small view-btn active" id="btn-chrono" onclick="setView('chrono')">Vista Horario</button>
+        <button class="btn btn-small view-btn" id="btn-table" onclick="setView('table')">Vista Tabla</button>
+    </div>
+    <button class="btn btn-small" style="background:#e67e22" onclick="autoSort()">Ordenar por horario</button>
+</div>
+
+<!-- ========== Chronological View ========== -->
+<div id="view-chrono"></div>
+
+<!-- ========== Table View (classic) ========== -->
+<div id="view-table" style="display:none">
 <div class="card">
     <h2>Medicamentos</h2>
-
     {% if medications %}
     <table>
         <tr><th>Nombre</th><th>Dosis</th><th>Horario</th><th>Notas</th><th>Estado</th><th></th></tr>
         {% for m in medications %}
         <tr>
-            <form method="post" action="/medications/edit/{{ m.id }}">
+            <form method="post" action="/medications/edit/{{ m.id }}" onsubmit="collectSchedule(this)">
                 <input type="hidden" name="user_id" value="{{ user.id }}">
                 <td><input name="name" value="{{ m.name }}" style="width:100%"></td>
                 <td><input name="dosage" value="{{ m.dosage or '' }}" style="width:100%"></td>
-                <td><input name="schedule" value="{{ m.schedule or '' }}" style="width:100%"></td>
+                <td>
+                    <div class="schedule-container" id="tbl-sched-{{ m.id }}"></div>
+                    <div class="meal-btns">
+                        <button type="button" class="btn btn-small meal-btn" onclick="addTimeInput('tbl-sched-{{ m.id }}')">+ Horario</button>
+                        <button type="button" class="btn btn-small meal-btn" onclick="addMealTime('tbl-sched-{{ m.id }}','08:00')">Desayuno</button>
+                        <button type="button" class="btn btn-small meal-btn" onclick="addMealTime('tbl-sched-{{ m.id }}','14:00')">Comida</button>
+                        <button type="button" class="btn btn-small meal-btn" onclick="addMealTime('tbl-sched-{{ m.id }}','20:00')">Cena</button>
+                    </div>
+                    <input type="hidden" name="schedule" class="schedule-hidden">
+                </td>
                 <td><input name="notes" value="{{ m.notes or '' }}" style="width:100%"></td>
                 <td>
                     <label><input type="checkbox" name="active" {% if m.active %}checked{% endif %}> Activo</label>
@@ -35,10 +98,12 @@
     <p style="color:#8899aa">No hay medicamentos registrados.</p>
     {% endif %}
 </div>
+</div>
 
+<!-- ========== Add Medication Form ========== -->
 <div class="card">
     <h2>Agregar medicamento</h2>
-    <form method="post" action="/medications/{{ user.id }}/add">
+    <form method="post" action="/medications/{{ user.id }}/add" onsubmit="collectSchedule(this)">
         <div class="form-row">
             <div class="form-group">
                 <label>Nombre</label>
@@ -48,9 +113,18 @@
                 <label>Dosis</label>
                 <input name="dosage" placeholder="500mg">
             </div>
+        </div>
+        <div class="form-row">
             <div class="form-group">
                 <label>Horario</label>
-                <input name="schedule" placeholder="8:00, 20:00">
+                <div class="schedule-container" id="new-sched"></div>
+                <div class="meal-btns">
+                    <button type="button" class="btn btn-small meal-btn" onclick="addTimeInput('new-sched')">+ Horario</button>
+                    <button type="button" class="btn btn-small meal-btn" onclick="addMealTime('new-sched','08:00')">Desayuno 8:00</button>
+                    <button type="button" class="btn btn-small meal-btn" onclick="addMealTime('new-sched','14:00')">Comida 14:00</button>
+                    <button type="button" class="btn btn-small meal-btn" onclick="addMealTime('new-sched','20:00')">Cena 20:00</button>
+                </div>
+                <input type="hidden" name="schedule" class="schedule-hidden">
             </div>
         </div>
         <div class="form-row">
@@ -62,4 +136,268 @@
         </div>
     </form>
 </div>
+
+<script>
+const MEDICATIONS = {{ medications | tojson }};
+const USER_ID = {{ user.id | tojson }};
+
+// --- Schedule parsing (mirrors main.py parse_medication_schedule) ---
+const MEAL_MAP = {
+    'desayuno': '08:00', 'comida': '14:00', 'cena': '20:00',
+    'almuerzo': '14:00', 'merienda': '17:00'
+};
+
+function parseScheduleTimes(str) {
+    if (!str) return [];
+    str = str.trim().toLowerCase();
+    // Explicit times
+    let matches = str.match(/\b(\d{1,2}:\d{2})\b/g);
+    if (matches && matches.length) {
+        return [...new Set(matches.map(t => t.split(':').map(p => p.padStart(2,'0')).join(':')))].sort();
+    }
+    // Interval: "cada X horas"
+    let m = str.match(/cada\s+(\d+)\s*hora/);
+    if (m) {
+        let interval = parseInt(m[1]), times = [], h = 8;
+        for (let i = 0; i < Math.floor(24 / interval) && i < 6; i++) {
+            times.push(String(h).padStart(2,'0') + ':00');
+            h = (h + interval) % 24;
+        }
+        return [...new Set(times)].sort();
+    }
+    // Frequency words
+    let freqMatch = str.match(/(una|dos|tres|cuatro)\s+vec/);
+    if (freqMatch) {
+        let n = {'una':1,'dos':2,'tres':3,'cuatro':4}[freqMatch[1]] || 1;
+        let presets = {1:['08:00'], 2:['08:00','20:00'], 3:['08:00','14:00','20:00'], 4:['08:00','12:00','16:00','20:00']};
+        return presets[n] || ['08:00'];
+    }
+    // Meal names
+    let meals = [];
+    for (let [k, v] of Object.entries(MEAL_MAP)) {
+        if (str.includes(k)) meals.push(v);
+    }
+    if (meals.length) return [...new Set(meals)].sort();
+    return [];
+}
+
+function getTimeBlock(time) {
+    let h = parseInt(time.split(':')[0]);
+    if (h >= 5 && h < 12) return 'manana';
+    if (h >= 12 && h < 18) return 'tarde';
+    return 'noche';
+}
+
+// --- Time chip UI ---
+function addTimeInput(containerId, defaultTime) {
+    let container = document.getElementById(containerId);
+    let chip = document.createElement('div');
+    chip.className = 'time-chip';
+    chip.innerHTML = '<input type="time" value="' + (defaultTime || '') + '">' +
+                     '<button type="button" class="remove-time" onclick="this.parentElement.remove()">&times;</button>';
+    container.appendChild(chip);
+    if (!defaultTime) chip.querySelector('input').focus();
+}
+
+function addMealTime(containerId, time) {
+    // Don't add duplicate times
+    let container = document.getElementById(containerId);
+    let existing = container.querySelectorAll('input[type="time"]');
+    for (let inp of existing) {
+        if (inp.value === time) return;
+    }
+    addTimeInput(containerId, time);
+}
+
+function collectSchedule(form) {
+    let containers = form.querySelectorAll('.schedule-container');
+    let hidden = form.querySelector('.schedule-hidden');
+    if (!hidden) return true;
+    let times = [];
+    containers.forEach(c => {
+        c.querySelectorAll('input[type="time"]').forEach(inp => {
+            if (inp.value) times.push(inp.value);
+        });
+    });
+    // Sort and deduplicate
+    times = [...new Set(times)].sort();
+    hidden.value = times.join(', ');
+    return true;
+}
+
+// --- Initialize table view schedule chips from existing data ---
+function initTableSchedules() {
+    MEDICATIONS.forEach(med => {
+        let container = document.getElementById('tbl-sched-' + med.id);
+        if (!container) return;
+        let times = parseScheduleTimes(med.schedule || '');
+        if (times.length === 0 && med.schedule && med.schedule.trim()) {
+            // Unparseable schedule — show as single chip placeholder
+            addTimeInput('tbl-sched-' + med.id, '');
+            return;
+        }
+        times.forEach(t => addTimeInput('tbl-sched-' + med.id, t));
+    });
+}
+
+// --- Chronological view ---
+function buildChronoView() {
+    let target = document.getElementById('view-chrono');
+
+    // Build entries: one per (medication, time)
+    let entries = [];
+    MEDICATIONS.forEach(med => {
+        let times = parseScheduleTimes(med.schedule || '');
+        if (times.length === 0) {
+            entries.push({med: med, time: null, block: 'sin'});
+        } else {
+            times.forEach(t => {
+                entries.push({med: med, time: t, block: getTimeBlock(t)});
+            });
+        }
+    });
+
+    // Group by block
+    let blocks = {
+        'manana': {label: 'Manana (05:00 - 11:59)', icon: '&#9728;', entries: []},
+        'tarde':  {label: 'Tarde (12:00 - 17:59)',  icon: '&#127774;', entries: []},
+        'noche':  {label: 'Noche (18:00 - 23:59)',  icon: '&#127769;', entries: []},
+        'sin':    {label: 'Sin horario',             icon: '&#8943;',  entries: []}
+    };
+    entries.forEach(e => blocks[e.block].entries.push(e));
+
+    let html = '';
+    for (let [key, blk] of Object.entries(blocks)) {
+        if (blk.entries.length === 0) continue;
+        // Sort entries within block by time
+        blk.entries.sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99'));
+
+        html += '<div class="time-block block-' + key + '">';
+        html += '<div class="time-block-header">' + blk.icon + ' ' + blk.label + '</div>';
+        html += '<div class="time-block-body">';
+
+        blk.entries.forEach(e => {
+            let med = e.med;
+            let inactiveClass = med.active ? '' : ' med-inactive';
+            let badge = med.active ? '' : ' <span class="badge badge-inactive">Inactivo</span>';
+
+            html += '<div class="med-row' + inactiveClass + '" id="chrono-row-' + med.id + '-' + (e.time || 'none') + '">';
+            html += '<span class="med-time">' + (e.time || '--:--') + '</span>';
+            html += '<span class="med-name">' + escHtml(med.name) + badge + '</span>';
+            html += '<span class="med-dosage">' + escHtml(med.dosage || '') + '</span>';
+            html += '<span class="med-notes" title="' + escHtml(med.notes || '') + '">' + escHtml(med.notes || '') + '</span>';
+            html += '<span class="med-actions">';
+            html += '<button class="btn btn-small" style="background:#0f3460" onclick="toggleEdit(' + med.id + ')">Editar</button>';
+            html += '</span>';
+            html += '</div>';
+
+            // Edit panel (shown once per med, only on first occurrence)
+            if (!document.querySelector('#chrono-edit-' + med.id + '-rendered')) {
+                html += '<div class="edit-panel" id="chrono-edit-' + med.id + '">';
+                html += '<form method="post" action="/medications/edit/' + med.id + '" onsubmit="collectSchedule(this)">';
+                html += '<input type="hidden" name="user_id" value="' + USER_ID + '">';
+                html += '<div class="form-row">';
+                html += '<div class="form-group"><label>Nombre</label><input name="name" value="' + escHtml(med.name) + '"></div>';
+                html += '<div class="form-group"><label>Dosis</label><input name="dosage" value="' + escHtml(med.dosage || '') + '"></div>';
+                html += '</div>';
+                html += '<div class="form-row"><div class="form-group"><label>Horario</label>';
+                html += '<div class="schedule-container" id="chrono-sched-' + med.id + '"></div>';
+                html += '<div class="meal-btns">';
+                html += '<button type="button" class="btn btn-small meal-btn" onclick="addTimeInput(\'chrono-sched-' + med.id + '\')">+ Horario</button>';
+                html += '<button type="button" class="btn btn-small meal-btn" onclick="addMealTime(\'chrono-sched-' + med.id + '\',\'08:00\')">Desayuno</button>';
+                html += '<button type="button" class="btn btn-small meal-btn" onclick="addMealTime(\'chrono-sched-' + med.id + '\',\'14:00\')">Comida</button>';
+                html += '<button type="button" class="btn btn-small meal-btn" onclick="addMealTime(\'chrono-sched-' + med.id + '\',\'20:00\')">Cena</button>';
+                html += '</div>';
+                html += '<input type="hidden" name="schedule" class="schedule-hidden">';
+                html += '</div></div>';
+                html += '<div class="form-row">';
+                html += '<div class="form-group"><label>Notas</label><input name="notes" value="' + escHtml(med.notes || '') + '"></div>';
+                html += '<div class="form-group" style="max-width:100px"><label>Activo</label>';
+                html += '<label><input type="checkbox" name="active" ' + (med.active ? 'checked' : '') + '> Si</label></div>';
+                html += '</div>';
+                html += '<div class="form-row" style="gap:8px">';
+                html += '<button type="submit" class="btn btn-primary btn-small">Guardar</button>';
+                html += '<button type="button" class="btn btn-small" style="background:#2a2a4a" onclick="toggleEdit(' + med.id + ')">Cancelar</button>';
+                html += '</form>';
+                html += '<form method="post" action="/medications/delete/' + med.id + '" style="display:inline" onsubmit="return confirm(\'Eliminar ' + escHtml(med.name) + '?\')">';
+                html += '<input type="hidden" name="user_id" value="' + USER_ID + '">';
+                html += '<button type="submit" class="btn btn-danger btn-small">Eliminar</button>';
+                html += '</form>';
+                html += '</div>';
+                html += '</div>';
+            }
+        });
+
+        html += '</div></div>';
+    }
+
+    if (!html) {
+        html = '<div class="card"><p class="chrono-empty">No hay medicamentos registrados.</p></div>';
+    }
+
+    target.innerHTML = html;
+
+    // Populate chrono schedule chips
+    let rendered = new Set();
+    MEDICATIONS.forEach(med => {
+        if (rendered.has(med.id)) return;
+        rendered.add(med.id);
+        let container = document.getElementById('chrono-sched-' + med.id);
+        if (!container) return;
+        let times = parseScheduleTimes(med.schedule || '');
+        times.forEach(t => addTimeInput('chrono-sched-' + med.id, t));
+    });
+}
+
+function toggleEdit(medId) {
+    let panel = document.getElementById('chrono-edit-' + medId);
+    if (panel) {
+        panel.style.display = panel.style.display === 'none' || !panel.style.display ? 'block' : 'none';
+    }
+}
+
+function escHtml(str) {
+    let d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
+}
+
+// --- View toggle ---
+function setView(view) {
+    document.getElementById('view-chrono').style.display = view === 'chrono' ? '' : 'none';
+    document.getElementById('view-table').style.display = view === 'table' ? '' : 'none';
+    document.getElementById('btn-chrono').classList.toggle('active', view === 'chrono');
+    document.getElementById('btn-table').classList.toggle('active', view === 'table');
+}
+
+// --- Auto-sort ---
+function autoSort() {
+    let sorted = MEDICATIONS.map(med => {
+        let times = parseScheduleTimes(med.schedule || '');
+        let earliest = times.length ? times[0] : '99:99';
+        return {id: med.id, earliest: earliest};
+    });
+    sorted.sort((a, b) => a.earliest.localeCompare(b.earliest));
+
+    let orderMap = {};
+    sorted.forEach((item, idx) => { orderMap[item.id] = idx; });
+
+    let form = document.createElement('form');
+    form.method = 'POST';
+    form.action = '/medications/' + USER_ID + '/sort';
+    let input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = 'order';
+    input.value = JSON.stringify(orderMap);
+    form.appendChild(input);
+    document.body.appendChild(form);
+    form.submit();
+}
+
+// --- Init ---
+document.addEventListener('DOMContentLoaded', function() {
+    initTableSchedules();
+    buildChronoView();
+});
+</script>
 {% endblock %}

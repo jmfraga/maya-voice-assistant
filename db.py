@@ -182,6 +182,11 @@ class Database:
             if "emergency" not in contact_cols:
                 conn.execute("ALTER TABLE contacts ADD COLUMN emergency INTEGER DEFAULT 0")
                 log.info("Columna emergency agregada a contacts")
+            # Medications migration: sort_order
+            med_cols = [row[1] for row in conn.execute("PRAGMA table_info(medications)").fetchall()]
+            if "sort_order" not in med_cols:
+                conn.execute("ALTER TABLE medications ADD COLUMN sort_order INTEGER DEFAULT 0")
+                log.info("Columna sort_order agregada a medications")
         log.info("DB inicializada: %s", self.db_path)
 
     # --- Users ---
@@ -274,11 +279,11 @@ class Database:
             params = [user_id]
             if active_only:
                 q += " AND active = 1"
-            rows = conn.execute(q + " ORDER BY name", params).fetchall()
+            rows = conn.execute(q + " ORDER BY sort_order, name", params).fetchall()
             return [dict(r) for r in rows]
 
     def update_medication(self, med_id: int, **kwargs):
-        allowed = {"name", "dosage", "schedule", "notes", "active"}
+        allowed = {"name", "dosage", "schedule", "notes", "active", "sort_order"}
         fields = {k: v for k, v in kwargs.items() if k in allowed}
         if not fields:
             return
@@ -290,6 +295,15 @@ class Database:
     def delete_medication(self, med_id: int):
         with self._conn() as conn:
             conn.execute("DELETE FROM medications WHERE id = ?", (med_id,))
+
+    def update_medication_sort_order(self, order_map: dict):
+        """Update sort_order for multiple medications. order_map: {med_id: sort_order}"""
+        with self._conn() as conn:
+            for med_id, sort_val in order_map.items():
+                conn.execute(
+                    "UPDATE medications SET sort_order = ? WHERE id = ?",
+                    (sort_val, med_id),
+                )
 
     def confirm_medication(self, medication_id: int, user_id: str):
         with self._conn() as conn:

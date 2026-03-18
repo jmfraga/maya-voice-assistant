@@ -159,6 +159,19 @@ def create_app(db=None, telegram_bot=None) -> Flask:
         flash("Medicamento eliminado", "success")
         return redirect(url_for("medications", user_id=user_id))
 
+    @app.route("/medications/<user_id>/sort", methods=["POST"])
+    def sort_medications(user_id):
+        """Save sort order from auto-sort."""
+        import json
+        try:
+            order = json.loads(request.form.get("order", "{}"))
+            order_map = {int(k): int(v) for k, v in order.items()}
+            db.update_medication_sort_order(order_map)
+            flash("Orden actualizado", "success")
+        except (json.JSONDecodeError, ValueError):
+            flash("Error al guardar orden", "error")
+        return redirect(url_for("medications", user_id=user_id))
+
     # --- Contacts ---
     @app.route("/contacts/<user_id>")
     def contacts(user_id):
