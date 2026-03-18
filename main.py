@@ -411,11 +411,13 @@ _DAY_NAMES = ["lun", "mar", "mie", "jue", "vie", "sab", "dom"]
 
 def _med_applies_today(med) -> bool:
     """Check if a medication applies today based on days_of_week field."""
-    days = (med.get("days_of_week") or "").strip()
+    days = (med.get("days_of_week") or "").strip().lower()
     if not days:
         return True  # empty = every day
+    if days == "sos":
+        return False  # as-needed, never auto-remind
     today = _DAY_NAMES[datetime.now().weekday()]
-    return today in [d.strip() for d in days.lower().split(",")]
+    return today in [d.strip() for d in days.split(",")]
 
 
 def _check_medication_reminders(db: Database, tts: TTS, display: Display):

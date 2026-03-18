@@ -46,6 +46,11 @@
     .day-toggle { width:32px; height:26px; border:1px solid #2a2a4a; border-radius:4px; background:#1a1a2e; color:#8899aa; font-size:0.75em; cursor:pointer; text-align:center; padding:0; }
     .day-toggle.active { background:#4ecca3; color:#1a1a2e; border-color:#4ecca3; font-weight:bold; }
     .med-days { color:#e67e22; font-size:0.8em; min-width:90px; }
+    .sos-toggle { width:40px; height:26px; border:1px solid #4a2a2a; border-radius:4px; background:#1a1a2e; color:#e94560; font-size:0.7em; font-weight:bold; cursor:pointer; text-align:center; padding:0; margin-left:4px; }
+    .sos-toggle.active { background:#e94560; color:#fff; border-color:#e94560; }
+    .days-row .day-toggle.disabled { opacity:0.3; pointer-events:none; }
+    .block-sos .time-block-header { background:#4a1a2a; color:#e94560; }
+    .med-days-sos { color:#e94560; font-size:0.8em; font-weight:bold; min-width:90px; }
 </style>
 
 <!-- View controls -->
@@ -239,13 +244,18 @@ function collectSchedule(form) {
         times = [...new Set(times)].sort();
         hidden.value = times.join(', ');
     }
-    // Collect days
+    // Collect days (SOS takes priority)
     let daysHidden = form.querySelector('.days-hidden');
     if (daysHidden) {
-        let active = form.querySelectorAll('.day-toggle.active');
-        let days = [];
-        active.forEach(btn => days.push(btn.dataset.day));
-        daysHidden.value = days.join(',');
+        let sosBtn = form.querySelector('.sos-toggle.active');
+        if (sosBtn) {
+            daysHidden.value = 'sos';
+        } else {
+            let active = form.querySelectorAll('.day-toggle.active');
+            let days = [];
+            active.forEach(btn => days.push(btn.dataset.day));
+            daysHidden.value = days.join(',');
+        }
     }
     return true;
 }
@@ -255,23 +265,58 @@ function createDayToggles(containerId, activeDays) {
     let container = document.getElementById(containerId);
     if (!container) return;
     let parsed = (activeDays || '').split(',').map(d => d.trim().toLowerCase()).filter(Boolean);
+    let isSos = parsed.length === 1 && parsed[0] === 'sos';
+
     DAY_CODES.forEach((code, i) => {
         let btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'day-toggle' + (parsed.includes(code) ? ' active' : '');
+        btn.className = 'day-toggle' + (!isSos && parsed.includes(code) ? ' active' : '') + (isSos ? ' disabled' : '');
         btn.textContent = DAY_LABELS[i];
         btn.dataset.day = code;
-        btn.onclick = function() { this.classList.toggle('active'); };
+        btn.onclick = function() {
+            this.classList.toggle('active');
+            // If any day activated, deactivate SOS
+            let sos = this.parentElement.querySelector('.sos-toggle');
+            if (sos && sos.classList.contains('active')) {
+                sos.classList.remove('active');
+            }
+        };
         container.appendChild(btn);
     });
+
+    // SOS button
+    let sos = document.createElement('button');
+    sos.type = 'button';
+    sos.className = 'sos-toggle' + (isSos ? ' active' : '');
+    sos.textContent = 'SOS';
+    sos.title = 'Segun necesidad';
+    sos.onclick = function() {
+        let becoming = !this.classList.contains('active');
+        this.classList.toggle('active');
+        let dayBtns = this.parentElement.querySelectorAll('.day-toggle');
+        dayBtns.forEach(b => {
+            if (becoming) {
+                b.classList.remove('active');
+                b.classList.add('disabled');
+            } else {
+                b.classList.remove('disabled');
+            }
+        });
+    };
+    container.appendChild(sos);
 }
 
 function formatDaysShort(daysStr) {
     if (!daysStr || !daysStr.trim()) return 'Diario';
+    if (daysStr.trim().toLowerCase() === 'sos') return 'SOS';
     let days = daysStr.split(',').map(d => d.trim().toLowerCase());
     if (days.length === 7) return 'Diario';
     let map = {lun:'L', mar:'Ma', mie:'Mi', jue:'J', vie:'V', sab:'S', dom:'D'};
     return days.map(d => map[d] || d).join('-');
+}
+
+function isSosMed(med) {
+    return (med.days_of_week || '').trim().toLowerCase() === 'sos';
 }
 
 // --- Initialize table view schedule chips from existing data ---
@@ -296,6 +341,10 @@ function buildChronoView() {
     // Build entries: one per (medication, time)
     let entries = [];
     MEDICATIONS.forEach(med => {
+        if (isSosMed(med)) {
+            entries.push({med: med, time: null, block: 'sos'});
+            return;
+        }
         let times = parseScheduleTimes(med.schedule || '');
         if (times.length === 0) {
             entries.push({med: med, time: null, block: 'sin'});
@@ -311,6 +360,7 @@ function buildChronoView() {
         'manana': {label: 'Manana (05:00 - 11:59)', icon: '&#9728;', entries: []},
         'tarde':  {label: 'Tarde (12:00 - 17:59)',  icon: '&#127774;', entries: []},
         'noche':  {label: 'Noche (18:00 - 23:59)',  icon: '&#127769;', entries: []},
+        'sos':    {label: 'Segun necesidad',         icon: '&#9888;',  entries: []},
         'sin':    {label: 'Sin horario',             icon: '&#8943;',  entries: []}
     };
     entries.forEach(e => blocks[e.block].entries.push(e));
@@ -335,7 +385,8 @@ function buildChronoView() {
             html += '<span class="med-name">' + escHtml(med.name) + badge + '</span>';
             html += '<span class="med-dosage">' + escHtml(med.dosage || '') + '</span>';
             let daysDisplay = formatDaysShort(med.days_of_week || '');
-            html += '<span class="med-days">' + escHtml(daysDisplay) + '</span>';
+            let daysCls = isSosMed(med) ? 'med-days-sos' : 'med-days';
+            html += '<span class="' + daysCls + '">' + escHtml(daysDisplay) + '</span>';
             html += '<span class="med-notes" title="' + escHtml(med.notes || '') + '">' + escHtml(med.notes || '') + '</span>';
             html += '<span class="med-actions">';
             html += '<button class="btn btn-small" style="background:#0f3460" onclick="toggleEdit(' + med.id + ')">Editar</button>';
