@@ -128,13 +128,16 @@ def create_app(db=None, telegram_bot=None) -> Flask:
 
     @app.route("/medications/<user_id>/add", methods=["POST"])
     def add_medication(user_id):
-        db.add_medication(
+        med_id = db.add_medication(
             user_id,
             request.form["name"],
             request.form.get("dosage", ""),
             request.form.get("schedule", ""),
             request.form.get("notes", ""),
         )
+        days = request.form.get("days_of_week", "").strip()
+        if days:
+            db.update_medication(med_id, days_of_week=days)
         flash("Medicamento agregado", "success")
         return redirect(url_for("medications", user_id=user_id))
 
@@ -148,6 +151,7 @@ def create_app(db=None, telegram_bot=None) -> Flask:
             schedule=request.form.get("schedule", ""),
             notes=request.form.get("notes", ""),
             active=1 if request.form.get("active") else 0,
+            days_of_week=request.form.get("days_of_week", ""),
         )
         flash("Medicamento actualizado", "success")
         return redirect(url_for("medications", user_id=user_id))

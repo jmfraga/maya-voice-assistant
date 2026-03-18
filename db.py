@@ -182,11 +182,14 @@ class Database:
             if "emergency" not in contact_cols:
                 conn.execute("ALTER TABLE contacts ADD COLUMN emergency INTEGER DEFAULT 0")
                 log.info("Columna emergency agregada a contacts")
-            # Medications migration: sort_order
+            # Medications migrations
             med_cols = [row[1] for row in conn.execute("PRAGMA table_info(medications)").fetchall()]
             if "sort_order" not in med_cols:
                 conn.execute("ALTER TABLE medications ADD COLUMN sort_order INTEGER DEFAULT 0")
                 log.info("Columna sort_order agregada a medications")
+            if "days_of_week" not in med_cols:
+                conn.execute("ALTER TABLE medications ADD COLUMN days_of_week TEXT DEFAULT ''")
+                log.info("Columna days_of_week agregada a medications")
         log.info("DB inicializada: %s", self.db_path)
 
     # --- Users ---
@@ -283,7 +286,7 @@ class Database:
             return [dict(r) for r in rows]
 
     def update_medication(self, med_id: int, **kwargs):
-        allowed = {"name", "dosage", "schedule", "notes", "active", "sort_order"}
+        allowed = {"name", "dosage", "schedule", "notes", "active", "sort_order", "days_of_week"}
         fields = {k: v for k, v in kwargs.items() if k in allowed}
         if not fields:
             return

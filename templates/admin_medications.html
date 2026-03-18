@@ -41,6 +41,11 @@
     .meal-btn:hover { background:#3a3a5a; }
 
     .chrono-empty { color:#8899aa; padding:20px; text-align:center; }
+
+    .days-row { display:flex; gap:4px; flex-wrap:wrap; margin-top:4px; }
+    .day-toggle { width:32px; height:26px; border:1px solid #2a2a4a; border-radius:4px; background:#1a1a2e; color:#8899aa; font-size:0.75em; cursor:pointer; text-align:center; padding:0; }
+    .day-toggle.active { background:#4ecca3; color:#1a1a2e; border-color:#4ecca3; font-weight:bold; }
+    .med-days { color:#e67e22; font-size:0.8em; min-width:90px; }
 </style>
 
 <!-- View controls -->
@@ -61,7 +66,7 @@
     <h2>Medicamentos</h2>
     {% if medications %}
     <table>
-        <tr><th>Nombre</th><th>Dosis</th><th>Horario</th><th>Notas</th><th>Estado</th><th></th></tr>
+        <tr><th>Nombre</th><th>Dosis</th><th>Horario</th><th>Dias</th><th>Notas</th><th>Estado</th><th></th></tr>
         {% for m in medications %}
         <tr>
             <form method="post" action="/medications/edit/{{ m.id }}" onsubmit="collectSchedule(this)">
@@ -77,6 +82,10 @@
                         <button type="button" class="btn btn-small meal-btn" onclick="addMealTime('tbl-sched-{{ m.id }}','20:00')">Cena</button>
                     </div>
                     <input type="hidden" name="schedule" class="schedule-hidden">
+                </td>
+                <td>
+                    <div class="days-row" id="tbl-days-{{ m.id }}"></div>
+                    <input type="hidden" name="days_of_week" class="days-hidden">
                 </td>
                 <td><input name="notes" value="{{ m.notes or '' }}" style="width:100%"></td>
                 <td>
@@ -126,6 +135,11 @@
                 </div>
                 <input type="hidden" name="schedule" class="schedule-hidden">
             </div>
+            <div class="form-group">
+                <label>Dias (vacio = diario)</label>
+                <div class="days-row" id="new-days"></div>
+                <input type="hidden" name="days_of_week" class="days-hidden">
+            </div>
         </div>
         <div class="form-row">
             <div class="form-group">
@@ -140,6 +154,8 @@
 <script>
 const MEDICATIONS = {{ medications | tojson }};
 const USER_ID = {{ user.id | tojson }};
+const DAY_CODES = ['lun','mar','mie','jue','vie','sab','dom'];
+const DAY_LABELS = ['L','Ma','Mi','J','V','S','D'];
 
 // --- Schedule parsing (mirrors main.py parse_medication_schedule) ---
 const MEAL_MAP = {
@@ -210,19 +226,52 @@ function addMealTime(containerId, time) {
 }
 
 function collectSchedule(form) {
+    // Collect times
     let containers = form.querySelectorAll('.schedule-container');
     let hidden = form.querySelector('.schedule-hidden');
-    if (!hidden) return true;
-    let times = [];
-    containers.forEach(c => {
-        c.querySelectorAll('input[type="time"]').forEach(inp => {
-            if (inp.value) times.push(inp.value);
+    if (hidden) {
+        let times = [];
+        containers.forEach(c => {
+            c.querySelectorAll('input[type="time"]').forEach(inp => {
+                if (inp.value) times.push(inp.value);
+            });
         });
-    });
-    // Sort and deduplicate
-    times = [...new Set(times)].sort();
-    hidden.value = times.join(', ');
+        times = [...new Set(times)].sort();
+        hidden.value = times.join(', ');
+    }
+    // Collect days
+    let daysHidden = form.querySelector('.days-hidden');
+    if (daysHidden) {
+        let active = form.querySelectorAll('.day-toggle.active');
+        let days = [];
+        active.forEach(btn => days.push(btn.dataset.day));
+        daysHidden.value = days.join(',');
+    }
     return true;
+}
+
+// --- Day-of-week toggle buttons ---
+function createDayToggles(containerId, activeDays) {
+    let container = document.getElementById(containerId);
+    if (!container) return;
+    let parsed = (activeDays || '').split(',').map(d => d.trim().toLowerCase()).filter(Boolean);
+    DAY_CODES.forEach((code, i) => {
+        let btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'day-toggle' + (parsed.includes(code) ? ' active' : '');
+        btn.textContent = DAY_LABELS[i];
+        btn.dataset.day = code;
+        btn.onclick = function() { this.classList.toggle('active'); };
+        container.appendChild(btn);
+    });
+}
+
+function formatDaysShort(daysStr) {
+    if (!daysStr || !daysStr.trim()) return 'Diario';
+    let days = daysStr.split(',').map(d => d.trim().toLowerCase());
+    if (days.length === 7) return 'Diario';
+    let map = {lun:'L', mar:'Ma', mie:'Mi', jue:'J', vie:'V', sab:'S', dom:'D'};
+    return days.map(d => map[d] || d).join('-');
 }
 
 // --- Initialize table view schedule chips from existing data ---
@@ -285,6 +334,8 @@ function buildChronoView() {
             html += '<span class="med-time">' + (e.time || '--:--') + '</span>';
             html += '<span class="med-name">' + escHtml(med.name) + badge + '</span>';
             html += '<span class="med-dosage">' + escHtml(med.dosage || '') + '</span>';
+            let daysDisplay = formatDaysShort(med.days_of_week || '');
+            html += '<span class="med-days">' + escHtml(daysDisplay) + '</span>';
             html += '<span class="med-notes" title="' + escHtml(med.notes || '') + '">' + escHtml(med.notes || '') + '</span>';
             html += '<span class="med-actions">';
             html += '<button class="btn btn-small" style="background:#0f3460" onclick="toggleEdit(' + med.id + ')">Editar</button>';
@@ -309,6 +360,10 @@ function buildChronoView() {
                 html += '<button type="button" class="btn btn-small meal-btn" onclick="addMealTime(\'chrono-sched-' + med.id + '\',\'20:00\')">Cena</button>';
                 html += '</div>';
                 html += '<input type="hidden" name="schedule" class="schedule-hidden">';
+                html += '</div>';
+                html += '<div class="form-group"><label>Dias (vacio = diario)</label>';
+                html += '<div class="days-row" id="chrono-days-' + med.id + '"></div>';
+                html += '<input type="hidden" name="days_of_week" class="days-hidden">';
                 html += '</div></div>';
                 html += '<div class="form-row">';
                 html += '<div class="form-group"><label>Notas</label><input name="notes" value="' + escHtml(med.notes || '') + '"></div>';
@@ -337,15 +392,17 @@ function buildChronoView() {
 
     target.innerHTML = html;
 
-    // Populate chrono schedule chips
+    // Populate chrono schedule chips + day toggles
     let rendered = new Set();
     MEDICATIONS.forEach(med => {
         if (rendered.has(med.id)) return;
         rendered.add(med.id);
         let container = document.getElementById('chrono-sched-' + med.id);
-        if (!container) return;
-        let times = parseScheduleTimes(med.schedule || '');
-        times.forEach(t => addTimeInput('chrono-sched-' + med.id, t));
+        if (container) {
+            let times = parseScheduleTimes(med.schedule || '');
+            times.forEach(t => addTimeInput('chrono-sched-' + med.id, t));
+        }
+        createDayToggles('chrono-days-' + med.id, med.days_of_week || '');
     });
 }
 
@@ -397,6 +454,12 @@ function autoSort() {
 // --- Init ---
 document.addEventListener('DOMContentLoaded', function() {
     initTableSchedules();
+    // Init day toggles for table view
+    MEDICATIONS.forEach(med => {
+        createDayToggles('tbl-days-' + med.id, med.days_of_week || '');
+    });
+    // Init day toggles for add form (all empty = diario)
+    createDayToggles('new-days', '');
     buildChronoView();
 });
 </script>

@@ -137,7 +137,9 @@ class LLM:
             if meds:
                 parts.append(f"Medicamentos de {user_name}:")
                 for m in meds:
-                    parts.append(f"  - {m['name']}: {m['dosage']}, horario: {m['schedule']}")
+                    days = m.get('days_of_week') or ''
+                    days_str = f", dias: {days}" if days else ""
+                    parts.append(f"  - {m['name']}: {m['dosage']}, horario: {m['schedule']}{days_str}")
 
             # Tomas de hoy
             today = now.strftime("%Y-%m-%d")

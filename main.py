@@ -406,6 +406,18 @@ def execute_actions(actions: list[dict], user_id: str, db: Database,
     return results
 
 
+_DAY_NAMES = ["lun", "mar", "mie", "jue", "vie", "sab", "dom"]
+
+
+def _med_applies_today(med) -> bool:
+    """Check if a medication applies today based on days_of_week field."""
+    days = (med.get("days_of_week") or "").strip()
+    if not days:
+        return True  # empty = every day
+    today = _DAY_NAMES[datetime.now().weekday()]
+    return today in [d.strip() for d in days.lower().split(",")]
+
+
 def _check_medication_reminders(db: Database, tts: TTS, display: Display):
     """Check all users' medication schedules and announce due medications."""
     now = datetime.now()
@@ -416,6 +428,8 @@ def _check_medication_reminders(db: Database, tts: TTS, display: Display):
         user_name = user["real_name"]
         meds = db.get_medications(user_id)
         for med in meds:
+            if not _med_applies_today(med):
+                continue
             times = parse_medication_schedule(med.get("schedule", ""))
             for t in times:
                 try:
