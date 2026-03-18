@@ -80,9 +80,9 @@
 ## Pre-Onboarding con Papas
 
 ### Limpieza del test
-- [ ] Quitar usuario "juanma" de config.yaml en Pi
-- [ ] Borrar usuario juanma de DB (delete_user desde admin)
-- [ ] Borrar voiceprint juanma.npy (si se creo)
+- [x] Quitar usuario "juanma" de config.yaml en Pi (2026-03-18)
+- [x] Borrar usuario juanma de DB (delete_user desde admin) (2026-03-18)
+- [x] Borrar voiceprint juanma.npy (si se creo) (2026-03-18)
 
 ### Bugs encontrados en prueba — RESUELTOS (2026-03-14)
 - [x] Fecha en contexto LLM mezcla idiomas — `_fecha_es()` con lookup tables en llm.py
@@ -94,7 +94,7 @@
 
 ---
 
-## Sprint 4: Refinamiento para Adultos Mayores — EN PROGRESO (2026-03-14)
+## Sprint 4: Refinamiento para Adultos Mayores — COMPLETADO (2026-03-18)
 
 ### Bug fixes
 - [x] Fecha en contexto LLM en español ("Sabado 14 de Marzo" en vez de "Saturday 14 de March")
@@ -116,11 +116,11 @@
 ### Mejoras de voz
 - [ ] Speaker ID: habilitar en produccion (resemblyzer en Pi)
 - [ ] Voiceprints de mama y papa (durante onboarding o manual)
-- [ ] Porcupine key renewal (clave actual puede expirar)
+- [x] Porcupine key: error handling mejorado con deteccion de key expirada (2026-03-18)
 
 ### Pre-onboarding con papas
-- [ ] Quitar usuario "juanma" de config.yaml en Pi
-- [ ] Borrar usuario juanma de DB y voiceprint
+- [x] Quitar usuario "juanma" de config.yaml en Pi (2026-03-18)
+- [x] Borrar usuario juanma de DB y voiceprint (2026-03-18)
 - [ ] Probar onboarding demo (Step 7) con clima inyectado
 
 ---
@@ -155,13 +155,13 @@
 
 ---
 
-## Sprint 6: Interaccion Rapida y Barge-in
+## Sprint 6: Interaccion Rapida y Barge-in — PARCIAL (2026-03-18)
 
-### Barge-in y comandos directos (prioridad alta)
-- [ ] **Barge-in**: "Maya para" detiene TTS inmediatamente y reanuda escucha
+### Barge-in y comandos directos
+- [x] **Barge-in**: "Oye Maya" durante TTS detiene playback y reanuda escucha (2026-03-18)
 - [ ] **Comandos directos sin LLM**: "pon musica", "apaga radio", "para", "cancela" → bypass LLM para baja latencia
 - [ ] **Early intent detection**: clasificar intent antes de enviar a LLM para comandos claros
-- [ ] **"Maya cancela" / "Maya olvidalo"**: comando explicito de salida en cualquier momento
+- [x] **"Maya cancela" / "Maya olvidalo"**: deteccion de frases de cancelacion en STT, sale de conversacion (2026-03-18)
 
 ### Saludo matutino contextualizado
 - [ ] Maya saluda automaticamente al primer usuario que interactua en la manana
@@ -175,21 +175,21 @@
 - [ ] **Privacidad**: metricas agregadas, sin contenido de conversaciones en analytics
 
 ### Personalidad configurable
-- [ ] UI en admin para editar tono, velocidad, estilo de respuesta de Maya
-- [ ] Presets: "paciente y lento", "animado y breve", "formal"
+- [x] UI en admin para editar personalidad de Maya con presets + texto libre (2026-03-18)
+- [x] Presets: "paciente y calida", "animada y breve", "formal" (2026-03-18)
 
 ---
 
-## Sprint 7: Robustez y Produccion
+## Sprint 7: Robustez y Produccion — PARCIAL (2026-03-18)
 
 ### Hardening
 - [ ] Verificar fallback chains completas (LLM/STT/TTS) con pruebas de fallo
 - [ ] Manejo de errores de red (WiFi intermitente en casa de papas, retry con backoff)
-- [ ] systemd service (en lugar de .desktop autostart) para robustez maxima
+- [x] systemd user service (scripts/maya.service) con auto-restart (2026-03-18)
 - [ ] UPS/no-break para RPi
 
 ### Monitoreo
-- [ ] Health check: Telegram alert si Maya se cae o no responde
+- [x] Health check con alerta Telegram si Maya se cae (scripts/health_check.py, cron 5min) (2026-03-18)
 - [ ] Metricas exportadas (Prometheus-compatible o SQLite simple)
 
 ### Mejoras de audio
@@ -235,6 +235,23 @@
 - [ ] Sugerencias siempre opcionales, nunca acciones automaticas
 - [ ] Almacenamiento ligero en SQLite (sin ML pesado)
 - [ ] Configurable: activar/desactivar sugerencias por usuario desde admin
+
+---
+
+## Sprint 9: Spotify por Voz
+
+### Control de Spotify via Web API
+- [ ] OAuth flow: autorizacion de cuenta Spotify (Premium requerido)
+- [ ] Comandos por voz: "Maya, pon mi playlist de rancheras", "Maya, siguiente cancion"
+- [ ] Acciones: [ACCION:SPOTIFY_PLAY:query], [ACCION:SPOTIFY_PAUSE], [ACCION:SPOTIFY_NEXT], [ACCION:SPOTIFY_PREV]
+- [ ] Busqueda de canciones, artistas, playlists, albums
+- [ ] Transfer playback al dispositivo "Maya" (Spotify Connect)
+- [ ] "Que cancion es esta?" → metadata del track actual
+- [ ] Integrar con radio: "pon radio" vs "pon Spotify" como fuentes de audio separadas
+- [ ] Pausar Spotify al hablar con Maya (como radio)
+
+### Prerequisito
+- [x] Spotify Connect basico via raspotify (instalado 2026-03-15)
 
 ---
 

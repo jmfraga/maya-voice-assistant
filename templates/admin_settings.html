@@ -330,6 +330,44 @@
     </div>
 </div>
 
+<!-- Personalidad de Maya -->
+<div class="card">
+    <h2>Personalidad de Maya</h2>
+    <p style="color:#8899aa;font-size:0.85em;margin-bottom:12px">
+        Define como habla Maya: tono, estilo, nivel de formalidad. Las instrucciones de acciones no se modifican.
+    </p>
+    <div class="form-row">
+        <div class="form-group">
+            <label>Preset</label>
+            <select id="personality-preset" onchange="applyPreset()" style="margin-bottom:8px">
+                <option value="">— Seleccionar preset —</option>
+                <option value="paciente">Paciente y calida (default)</option>
+                <option value="animada">Animada y breve</option>
+                <option value="formal">Formal y respetuosa</option>
+                <option value="custom">Personalizada</option>
+            </select>
+        </div>
+    </div>
+    <div class="form-group">
+        <label>Texto de personalidad</label>
+        <textarea name="personality" id="personality-text" rows="6" style="width:100%;font-size:0.9em;background:#0f3460;color:#e8e8e8;border:1px solid #1a1a2e;border-radius:6px;padding:10px;font-family:inherit">{{ config.get('assistant', {}).get('personality', '') }}</textarea>
+    </div>
+</div>
+
+<script>
+var presets = {
+    "paciente": "Eres Maya, una asistente de voz amable y paciente para personas mayores.\nHablas espanol mexicano de forma natural y calida.\nRespuestas CORTAS (1-3 oraciones maximo). Usa \"usted\" de forma respetuosa.\nSi no entiendes algo, pide amablemente que repitan.\nNUNCA des consejos medicos especificos. Si preguntan sobre salud, sugiere consultar al doctor.",
+    "animada": "Eres Maya, una asistente de voz alegre y energetica.\nHablas espanol mexicano con entusiasmo y calidez.\nRespuestas MUY CORTAS (1-2 oraciones). Usa \"usted\" de forma respetuosa pero cercana.\nSi no entiendes algo, pide que repitan con buen animo.\nNUNCA des consejos medicos especificos. Si preguntan sobre salud, sugiere consultar al doctor.",
+    "formal": "Eres Maya, una asistente de voz profesional y respetuosa.\nHablas espanol mexicano con formalidad y claridad.\nRespuestas claras y concisas (1-3 oraciones). Siempre usa \"usted\".\nSi no entiendes algo, pide amablemente que repitan.\nNUNCA des consejos medicos especificos. Si preguntan sobre salud, sugiere consultar al doctor."
+};
+function applyPreset() {
+    var sel = document.getElementById("personality-preset").value;
+    if (presets[sel]) {
+        document.getElementById("personality-text").value = presets[sel];
+    }
+}
+</script>
+
 <!-- Display -->
 <div class="card">
     <h2>Pantalla</h2>

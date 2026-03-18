@@ -802,6 +802,11 @@ def create_app(db=None, telegram_bot=None) -> Flask:
         if weather_city:
             cfg.setdefault("weather", {})["city"] = weather_city
 
+        # --- Personality ---
+        personality = request.form.get("personality", "").strip()
+        if personality:
+            cfg.setdefault("assistant", {})["personality"] = personality
+
         # --- Production mode ---
         cfg["production_mode"] = request.form.get("production_mode") == "on"
 

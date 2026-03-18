@@ -3,12 +3,17 @@
 import subprocess
 import tempfile
 import time
+import threading
 import logging
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
 
 log = logging.getLogger("maya.audio")
+
+# Global playback state for interruptible playback
+_playback_proc = None
+_playback_lock = threading.Lock()
 
 
 def bt_connect(mac: str) -> bool:
@@ -163,14 +168,63 @@ def save_wav(audio: np.ndarray, sample_rate: int = 16000) -> str:
     return path
 
 
-def play_audio(path: str):
-    """Play audio file via pw-play (routes through PipeWire/BT)."""
+def play_audio(path: str, interrupt: threading.Event | None = None) -> bool:
+    """Play audio file via pw-play (routes through PipeWire/BT).
+
+    Args:
+        path: Audio file path.
+        interrupt: If provided, poll this event during playback. When set,
+                   playback is killed immediately.
+
+    Returns:
+        True if playback was interrupted, False if it completed normally.
+    """
+    global _playback_proc
     try:
-        subprocess.run(["pw-play", path], timeout=30)
-    except subprocess.TimeoutExpired:
-        log.warning("Playback timeout")
+        proc = subprocess.Popen(
+            ["pw-play", path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        with _playback_lock:
+            _playback_proc = proc
+
+        if interrupt:
+            while proc.poll() is None:
+                if interrupt.is_set():
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                    log.info("Playback interrumpido")
+                    return True
+                time.sleep(0.1)
+        else:
+            try:
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                log.warning("Playback timeout")
+
+        return False
     except Exception as e:
         log.error("Error reproduciendo: %s", e)
+        return False
+    finally:
+        with _playback_lock:
+            _playback_proc = None
+
+
+def stop_playback():
+    """Stop any currently playing audio."""
+    with _playback_lock:
+        if _playback_proc and _playback_proc.poll() is None:
+            _playback_proc.terminate()
+            try:
+                _playback_proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                _playback_proc.kill()
 
 
 def generate_sounds(sounds_dir: str):

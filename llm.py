@@ -66,6 +66,7 @@ class LLM:
         self.provider = config.get("primary", "claude")
         self.fallback_provider = config.get("fallback", "")
         self.config = config
+        self.personality = assistant_config.get("personality", "")
         self.system_prompt = assistant_config.get("system_prompt", "")
         self.assistant_name = assistant_config.get("name", "Maya")
         self._client = None
@@ -197,7 +198,8 @@ class LLM:
              weather=None) -> tuple[str, list[dict]]:
         """Send message to LLM, return (response_text, actions)."""
         context = self.build_context(user_name, db, user_id, weather=weather)
-        system = f"{self.system_prompt}\n\n--- Contexto ---\n{context}"
+        prompt_parts = [p for p in [self.personality, self.system_prompt] if p]
+        system = "\n\n".join(prompt_parts) + f"\n\n--- Contexto ---\n{context}"
 
         providers = {
             "synapse": self._chat_synapse,

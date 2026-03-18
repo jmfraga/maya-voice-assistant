@@ -26,18 +26,30 @@ class WakeWordDetector:
             if os.path.isfile(auto_es):
                 model_path = auto_es
 
-        self.porcupine = pvporcupine.create(
-            access_key=config["access_key"],
-            keyword_paths=[keyword_path],
-            model_path=model_path,
-            sensitivities=[config.get("sensitivity", 0.6)],
-        )
+        try:
+            self.porcupine = pvporcupine.create(
+                access_key=config["access_key"],
+                keyword_paths=[keyword_path],
+                model_path=model_path,
+                sensitivities=[config.get("sensitivity", 0.6)],
+            )
+        except pvporcupine.PorcupineActivationError as e:
+            log.error("Porcupine ACCESS KEY EXPIRADA o invalida: %s", e)
+            log.error("Renueva la key en https://console.picovoice.ai")
+            raise
+        except pvporcupine.PorcupineActivationLimitError as e:
+            log.error("Porcupine limite de activaciones alcanzado: %s", e)
+            raise
+        except pvporcupine.PorcupineActivationRefusedError as e:
+            log.error("Porcupine activacion rechazada: %s", e)
+            raise
+
         self.sample_rate = self.porcupine.sample_rate
         self.frame_length = self.porcupine.frame_length
         self._running = False
         self._proc = None
         log.info(
-            "Porcupine init: rate=%d, frame=%d, model=%s",
+            "Porcupine init OK: rate=%d, frame=%d, model=%s",
             self.sample_rate, self.frame_length, model_path or "default",
         )
 

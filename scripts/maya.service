@@ -1,0 +1,32 @@
+# Maya Voice Assistant — systemd user service
+#
+# Install:
+#   mkdir -p ~/.config/systemd/user/
+#   cp scripts/maya.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable maya.service
+#   systemctl --user start maya.service
+#
+# Logs:
+#   journalctl --user -u maya.service -f
+#
+# Requires lingering (so it starts at boot, not login):
+#   sudo loginctl enable-linger jmfraga
+
+[Unit]
+Description=Maya Voice Assistant
+After=graphical-session.target pipewire.service
+Wants=pipewire.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/jmfraga/voice_assistant
+ExecStart=/usr/bin/python3 main.py
+Restart=on-failure
+RestartSec=5
+# PipeWire and display access
+Environment=DISPLAY=:0
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+
+[Install]
+WantedBy=default.target

@@ -1070,6 +1070,22 @@ def run_onboarding(user_id: str, user_name: str, config: dict, db,
     log.info("=== Onboarding completado para %s ===", user_name)
 
 
+# --- Cancel/exit detection for barge-in ---
+_CANCEL_PHRASES = {
+    "para", "maya para", "cancela", "maya cancela",
+    "olvidalo", "olvídalo", "dejalo", "déjalo", "ya dejalo",
+    "ya para", "ya basta", "basta",
+    "eso es todo", "es todo", "no gracias",
+    "hasta luego", "adios", "adiós",
+}
+
+
+def _is_cancel(text: str) -> bool:
+    """Check if transcribed text is a cancel/stop command."""
+    t = text.lower().strip().rstrip(".,!?¿¡")
+    return t in _CANCEL_PHRASES
+
+
 def main():
     global wakeword_detector, running
 
@@ -1137,6 +1153,7 @@ def main():
 
     # Talk trigger event (for tap-to-talk and wake word)
     talk_event = threading.Event()
+    tts_interrupt = threading.Event()  # Interrupt TTS on barge-in
     user_talk_info = {"user_id": None, "mode": None}  # set by user menu
 
     def on_talk_pressed():
@@ -1205,6 +1222,7 @@ def main():
     def wakeword_loop():
         while running and wakeword_detector:
             if wakeword_detector.listen():
+                tts_interrupt.set()  # Interrupt any playing TTS (barge-in)
                 talk_event.set()
 
     if use_wakeword:
@@ -1340,6 +1358,17 @@ def main():
             display.set_transcript(text)
             log.info("Transcripcion: %s", text)
 
+            # f1. Cancel detection (user accidentally triggered or wants to dismiss)
+            if _is_cancel(text):
+                log.info("Usuario cancelo: '%s'", text)
+                display.active_user_id = None
+                display.show_main()
+                if radio_was_playing and not radio.playing:
+                    name = radio.play(radio_was_playing)
+                    if name:
+                        display.set_radio(name)
+                continue
+
             # f2. Mood analysis
             try:
                 mood = analyze_mood(audio, text, audio_cfg.get("sample_rate", 16000))
@@ -1374,25 +1403,32 @@ def main():
                     else:
                         log.info("Accion: %s", r)
 
-            # i. TTS response
+            # i. TTS response (interruptible — barge-in with wake word)
             display.set_status("Hablando...", "#e94560")
             display.set_response(response_text)
 
+            tts_interrupted = False
             tts_path = tts.speak(response_text)
             if tts_path:
-                play_audio(tts_path)
+                tts_interrupt.clear()
+                tts_interrupted = play_audio(tts_path, interrupt=tts_interrupt)
                 os.unlink(tts_path)
 
-            # i2. Speak search results if any
-            if search_answer:
+            # i2. Speak search results if any (skip if interrupted)
+            if search_answer and not tts_interrupted:
                 display.set_status("Resultado de busqueda", "#3498DB")
                 display.set_response(search_answer)
                 search_path = tts.speak(search_answer)
                 if search_path:
-                    play_audio(search_path)
+                    tts_interrupt.clear()
+                    tts_interrupted = play_audio(search_path, interrupt=tts_interrupt)
                     os.unlink(search_path)
                 if user_id:
                     db.save_conversation(user_id, "assistant", f"[Busqueda] {search_answer}")
+
+            if tts_interrupted:
+                talk_event.clear()  # Consume wake word event
+                log.info("TTS interrumpido por barge-in")
 
             # Save assistant response
             if user_id:
@@ -1438,6 +1474,15 @@ def main():
                 if user_id:
                     db.save_conversation(user_id, "user", fw_text)
 
+                # Cancel detection in follow-up
+                if _is_cancel(fw_text):
+                    log.info("Cancel en follow-up ronda %d: '%s'", followup_round, fw_text)
+                    bye = tts.speak("Esta bien, aqui estoy si me necesita.")
+                    if bye:
+                        play_audio(bye)
+                        os.unlink(bye)
+                    break
+
                 display.set_status("Pensando...", "#f0a500")
                 fw_response, fw_actions = llm.chat(fw_text, user_name, db, user_id, weather=weather)
 
@@ -1459,18 +1504,25 @@ def main():
                 display.set_status("Hablando...", "#e94560")
                 display.set_response(fw_response)
                 fw_tts = tts.speak(fw_response)
+                fw_interrupted = False
                 if fw_tts:
-                    play_audio(fw_tts)
+                    tts_interrupt.clear()
+                    fw_interrupted = play_audio(fw_tts, interrupt=tts_interrupt)
                     os.unlink(fw_tts)
 
-                if fw_search:
+                if fw_search and not fw_interrupted:
                     display.set_response(fw_search)
                     fw_search_path = tts.speak(fw_search)
                     if fw_search_path:
-                        play_audio(fw_search_path)
+                        tts_interrupt.clear()
+                        fw_interrupted = play_audio(fw_search_path, interrupt=tts_interrupt)
                         os.unlink(fw_search_path)
                     if user_id:
                         db.save_conversation(user_id, "assistant", f"[Busqueda] {fw_search}")
+
+                if fw_interrupted:
+                    talk_event.clear()
+                    log.info("Follow-up TTS interrumpido por barge-in")
 
                 if user_id:
                     db.save_conversation(user_id, "assistant", fw_response)
