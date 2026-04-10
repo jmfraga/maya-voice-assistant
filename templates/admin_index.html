@@ -31,6 +31,10 @@
                     <input name="user_telegram_chat_id" value="{{ u.telegram_chat_id or '' }}" placeholder="Telegram Chat ID"
                            style="width:130px;font-size:0.8em;background:#1a1a2e;border:1px solid transparent;color:#8899aa;padding:2px 6px;border-radius:4px"
                            onfocus="this.style.borderColor='#4ecca3'" onblur="this.style.borderColor='transparent'">
+                    <input name="news_preference" value="{{ u.news_preference or '' }}" placeholder="Noticias: Mexico, deportes..."
+                           style="width:180px;font-size:0.8em;background:#1a1a2e;border:1px solid transparent;color:#8899aa;padding:2px 6px;border-radius:4px"
+                           title="Preferencia de noticias para resumen diario por Telegram"
+                           onfocus="this.style.borderColor='#4ecca3'" onblur="this.style.borderColor='transparent'">
                     <button type="submit" class="btn btn-primary btn-small" style="padding:2px 8px;font-size:0.75em">OK</button>
                 </form>
                 <form method="post" action="/users/delete/{{ u.id }}" style="display:inline"

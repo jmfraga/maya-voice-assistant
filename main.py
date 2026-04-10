@@ -617,7 +617,12 @@ def _send_daily_summary(db: Database, telegram: "TelegramBot", weather_obj=None,
         # News (via Perplexity/search, brief)
         if search_obj:
             try:
-                news = search_obj.query("noticias mas importantes de Mexico hoy, maximo 3 titulares breves")
+                news_pref = user.get("news_preference", "").strip()
+                if news_pref:
+                    news_query = f"noticias mas importantes de hoy sobre: {news_pref}. Maximo 3 titulares breves"
+                else:
+                    news_query = "noticias mas importantes de Mexico hoy, maximo 3 titulares breves"
+                news = search_obj.query(news_query)
                 if news and len(news) > 20:
                     parts.append("Noticias del dia:")
                     # Truncate if too long

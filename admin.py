@@ -329,6 +329,11 @@ def create_app(db=None, telegram_bot=None) -> Flask:
         elif "user_telegram_chat_id" in request.form:
             # Field present but empty — clear the association
             db.set_user_telegram(user_id, None)
+        # News preference for daily Telegram summary
+        news_pref = request.form.get("news_preference", "").strip()
+        with db._conn() as conn:
+            conn.execute("UPDATE users SET news_preference = ? WHERE id = ?",
+                         (news_pref, user_id))
         return redirect(url_for("index"))
 
     @app.route("/users/delete/<user_id>", methods=["POST"])

@@ -177,6 +177,9 @@ class Database:
             if "telegram_chat_id" not in cols:
                 conn.execute("ALTER TABLE users ADD COLUMN telegram_chat_id INTEGER")
                 log.info("Columna telegram_chat_id agregada a users")
+            if "news_preference" not in cols:
+                conn.execute("ALTER TABLE users ADD COLUMN news_preference TEXT DEFAULT ''")
+                log.info("Columna news_preference agregada a users")
             # Contacts migration: emergency flag
             contact_cols = [row[1] for row in conn.execute("PRAGMA table_info(contacts)").fetchall()]
             if "emergency" not in contact_cols:
