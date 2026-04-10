@@ -964,6 +964,7 @@ class Display:
             tk.Frame(card, bg=CARD_BG, height=self.y(10)).pack()
 
     def _build_my_day_screen(self, user_id: str):
+        """Build 'Mi dia' screen: warm daily summary with weather, meds, reminders."""
         screen_name = f"myday_{user_id}"
         if screen_name in self._screens:
             self._screens[screen_name].destroy()
@@ -972,80 +973,233 @@ class Display:
         if not user or not self.db:
             return
         color = user["color"]
+        name = user["name"]
 
         f = tk.Frame(self._container, bg=BG)
         f.place(x=0, y=0, width=W, height=H)
         self._screens[screen_name] = f
 
+        # --- Header: greeting + name ---
         header = tk.Frame(f, bg=color, height=self.y(55))
         header.place(x=0, y=0, width=W, height=self.y(55))
-        back_btn = tk.Label(header, text="\u2190 Menu",
-                            font=("Helvetica", self.fs(16), "bold"),
-                            fg="white", bg=color, cursor="hand2")
+
+        back_btn = tk.Label(
+            header, text="\u2190 Menu", font=("Helvetica", self.fs(16), "bold"),
+            fg="white", bg=color, cursor="hand2",
+        )
         back_btn.place(x=self.x(15), y=self.y(10), height=self.y(35))
         back_btn.bind("<Button-1>", lambda e, u=user_id: self._open_user_menu(u))
 
-        tk.Label(header, text=f"Mi dia - {user['name']}",
-                 font=("Helvetica", self.fs(20), "bold"), fg="white", bg=color,
-                 ).place(relx=0.5, y=self.y(10), anchor="n")
+        tk.Label(
+            header, text=f"{_greeting()}, {name}",
+            font=("Helvetica", self.fs(22), "bold"), fg="white", bg=color,
+        ).place(relx=0.5, y=self.y(10), anchor="n")
 
-        dy = self.y(70)
+        # --- Scrollable content area ---
+        canvas = tk.Canvas(f, bg=BG, highlightthickness=0)
+        canvas.place(x=0, y=self.y(58), width=W, height=H - self.y(108))
 
-        # Weather
+        inner = tk.Frame(canvas, bg=BG)
+        canvas_window = canvas.create_window((0, 0), window=inner, anchor="nw", width=W)
+
+        # Enable touch scrolling
+        def _on_touch_scroll(event):
+            canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+        canvas.bind("<MouseWheel>", _on_touch_scroll)
+        canvas.bind("<Button-4>", lambda e: canvas.yview_scroll(-3, "units"))
+        canvas.bind("<Button-5>", lambda e: canvas.yview_scroll(3, "units"))
+
+        # --- Date + Weather card ---
+        date_card = tk.Frame(inner, bg=CARD_BG)
+        date_card.pack(fill="x", padx=self.x(12), pady=(self.y(8), self.y(4)))
+
+        now = datetime.now()
+        day_name = DAYS[now.weekday()]
+        month_name = MONTHS[now.month]
+        date_str = f"{day_name} {now.day} de {month_name} de {now.year}"
+
+        tk.Label(
+            date_card, text=date_str,
+            font=("Helvetica", self.fs(18), "bold"), fg=TEXT, bg=CARD_BG, anchor="w",
+        ).pack(fill="x", padx=self.x(15), pady=(self.y(10), self.y(2)))
+
         if self.weather:
-            wd = self.weather.data
+            wd = self.weather.data if hasattr(self.weather, 'data') else self.weather
             if wd:
                 icon = _weather_icon(wd.get("icon", ""))
-                tk.Label(f, text=f"{icon} {wd['temp']}\u00B0C - {wd['description']}",
-                         font=("Helvetica", self.fs(20)), fg=TEXT, bg=BG).place(x=self.x(20), y=dy)
-                dy += self.y(40)
+                weather_text = f"{icon} {wd.get('temp', '')}\u00B0C, {wd.get('description', '')}"
+                feels = wd.get("feels_like")
+                if feels is not None:
+                    weather_text += f"  (sensacion {feels}\u00B0C)"
+                tk.Label(
+                    date_card, text=weather_text,
+                    font=("Helvetica", self.fs(16)), fg=TEXT_SEC, bg=CARD_BG, anchor="w",
+                ).pack(fill="x", padx=self.x(15), pady=(0, self.y(10)))
+        else:
+            tk.Frame(date_card, bg=CARD_BG, height=self.y(8)).pack()
 
-        # Medications status
-        tk.Label(f, text="Medicamentos:", font=("Helvetica", self.fs(17), "bold"),
-                 fg=WARNING, bg=BG).place(x=self.x(20), y=dy)
-        dy += self.y(30)
+        # --- Medications card ---
+        med_card = tk.Frame(inner, bg=CARD_BG)
+        med_card.pack(fill="x", padx=self.x(12), pady=self.y(4))
 
-        meds = self.db.get_medications(user_id, active_only=True)
-        today = datetime.now().strftime("%Y-%m-%d")
+        # Filter meds by day of week
+        all_meds = self.db.get_medications(user_id, active_only=True)
+        day_abbrevs = ["lun", "mar", "mie", "jue", "vie", "sab", "dom"]
+        today_abbrev = day_abbrevs[now.weekday()]
+        today_meds = []
+        sos_meds = []
+        for m in all_meds:
+            days = (m.get("days_of_week") or "").strip().lower()
+            if days == "sos":
+                sos_meds.append(m)
+            elif days == "" or today_abbrev in days:
+                today_meds.append(m)
+
+        today = now.strftime("%Y-%m-%d")
         log_today = self.db.get_medication_log(user_id, date=today)
         taken_ids = {e["medication_id"] for e in log_today}
+        confirmed_count = sum(1 for m in today_meds if m["id"] in taken_ids)
+        total_today = len(today_meds)
 
-        if not meds:
-            tk.Label(f, text="  Sin medicamentos", font=("Helvetica", self.fs(15)),
-                     fg=MUTED, bg=BG).place(x=self.x(20), y=dy)
-            dy += self.y(25)
+        # Summary line
+        if total_today == 0:
+            summary = "No tienes medicamentos programados para hoy"
+            summary_color = MUTED
+        elif confirmed_count == total_today:
+            summary = f"Todos tus medicamentos del dia estan confirmados ({total_today})"
+            summary_color = SUCCESS
+        elif confirmed_count > 0:
+            summary = f"Medicamentos de hoy: {confirmed_count} de {total_today} confirmados"
+            summary_color = TEXT
         else:
-            for med in meds:
-                taken = med["id"] in taken_ids
-                icon = "\u2714" if taken else "\u23F3"
-                clr = SUCCESS if taken else WARNING
-                tk.Label(f, text=f"  {icon} {med['name']}",
-                         font=("Helvetica", self.fs(15)), fg=clr, bg=BG).place(x=self.x(20), y=dy)
-                dy += self.y(25)
+            summary = f"Tienes {total_today} medicamentos programados para hoy"
+            summary_color = TEXT
 
-        dy += self.y(15)
+        tk.Label(
+            med_card, text=summary,
+            font=("Helvetica", self.fs(16), "bold"), fg=summary_color, bg=CARD_BG, anchor="w",
+        ).pack(fill="x", padx=self.x(15), pady=(self.y(10), self.y(5)))
 
-        # Reminders
-        tk.Label(f, text="Recordatorios:", font=("Helvetica", self.fs(17), "bold"),
-                 fg=ACCENT, bg=BG).place(x=self.x(20), y=dy)
-        dy += self.y(30)
+        # List today's meds — grouped by schedule time, soft style
+        for m in today_meds:
+            taken = m["id"] in taken_ids
+            # Subtle indicator: dot color, not aggressive checkmarks
+            dot = "\u25CF" if taken else "\u25CB"
+            dot_color = SUCCESS if taken else MUTED
+            name_color = TEXT_SEC if taken else TEXT
 
+            med_row = tk.Frame(med_card, bg=CARD_BG)
+            med_row.pack(fill="x", padx=self.x(12), pady=self.y(1))
+
+            tk.Label(
+                med_row, text=dot, font=("Helvetica", self.fs(12)),
+                fg=dot_color, bg=CARD_BG, width=2,
+            ).pack(side="left", padx=(self.x(3), 0))
+
+            med_text = m["name"]
+            if m.get("dosage"):
+                med_text += f" — {m['dosage']}"
+            tk.Label(
+                med_row, text=med_text,
+                font=("Helvetica", self.fs(14)), fg=name_color, bg=CARD_BG, anchor="w",
+            ).pack(side="left", padx=self.x(5))
+
+            if m.get("schedule"):
+                tk.Label(
+                    med_row, text=m["schedule"],
+                    font=("Helvetica", self.fs(12)), fg=MUTED, bg=CARD_BG, anchor="e",
+                ).pack(side="right", padx=self.x(10))
+
+        # SOS meds (if any)
+        if sos_meds:
+            tk.Label(
+                med_card, text="Segun necesidad:",
+                font=("Helvetica", self.fs(13)), fg=MUTED, bg=CARD_BG, anchor="w",
+            ).pack(fill="x", padx=self.x(15), pady=(self.y(8), self.y(2)))
+            for m in sos_meds:
+                med_text = m["name"]
+                if m.get("dosage"):
+                    med_text += f" — {m['dosage']}"
+                tk.Label(
+                    med_card, text=f"  {med_text}",
+                    font=("Helvetica", self.fs(13)), fg=MUTED, bg=CARD_BG, anchor="w",
+                ).pack(fill="x", padx=self.x(15), pady=self.y(1))
+
+        tk.Frame(med_card, bg=CARD_BG, height=self.y(8)).pack()
+
+        # --- Reminders card ---
         reminders = self.db.get_pending_reminders(user_id)
-        if not reminders:
-            tk.Label(f, text="  Sin recordatorios", font=("Helvetica", self.fs(15)),
-                     fg=MUTED, bg=BG).place(x=self.x(20), y=dy)
-        else:
-            for r in reminders[:5]:
-                tk.Label(f, text=f"  \u23F0 {r['remind_at']} - {r['text']}",
-                         font=("Helvetica", self.fs(15)), fg=TEXT, bg=BG).place(x=self.x(20), y=dy)
-                dy += self.y(25)
+        if reminders:
+            rem_card = tk.Frame(inner, bg=CARD_BG)
+            rem_card.pack(fill="x", padx=self.x(12), pady=self.y(4))
 
-        # Bottom home
+            tk.Label(
+                rem_card, text="Recordatorios",
+                font=("Helvetica", self.fs(16), "bold"), fg=ACCENT, bg=CARD_BG, anchor="w",
+            ).pack(fill="x", padx=self.x(15), pady=(self.y(10), self.y(5)))
+
+            for r in reminders[:5]:
+                tk.Label(
+                    rem_card, text=f"  \u23F0 {r['remind_at']} — {r['text']}",
+                    font=("Helvetica", self.fs(14)), fg=TEXT, bg=CARD_BG, anchor="w",
+                ).pack(fill="x", padx=self.x(15), pady=self.y(2))
+
+            tk.Frame(rem_card, bg=CARD_BG, height=self.y(8)).pack()
+
+        # --- Treatment measurements card (recent) ---
+        schemas = self.db.get_treatment_schemas(user_id, active_only=True)
+        if schemas:
+            has_measurements = False
+            meas_card = tk.Frame(inner, bg=CARD_BG)
+
+            tk.Label(
+                meas_card, text="Mediciones recientes",
+                font=("Helvetica", self.fs(16), "bold"), fg="#16A085", bg=CARD_BG, anchor="w",
+            ).pack(fill="x", padx=self.x(15), pady=(self.y(10), self.y(5)))
+
+            for schema in schemas:
+                try:
+                    measurements = self.db.get_measurement_log(
+                        user_id, schema_id=schema["id"], limit=1
+                    )
+                    if measurements:
+                        has_measurements = True
+                        ml = measurements[0]
+                        unit = schema.get("measurement_unit", "")
+                        ts = ml["measured_at"][:16] if ml.get("measured_at") else ""
+                        text = f"  {schema['measurement_name']}: {ml['measurement_value']}{unit}"
+                        if ml.get("dose_given"):
+                            text += f" \u2192 {ml['dose_given']} {ml.get('dose_unit', '')}"
+                        if ts:
+                            text += f"  ({ts})"
+                        tk.Label(
+                            meas_card, text=text,
+                            font=("Helvetica", self.fs(14)), fg=TEXT, bg=CARD_BG, anchor="w",
+                        ).pack(fill="x", padx=self.x(15), pady=self.y(2))
+                except Exception:
+                    pass
+
+            if has_measurements:
+                tk.Frame(meas_card, bg=CARD_BG, height=self.y(8)).pack()
+                meas_card.pack(fill="x", padx=self.x(12), pady=self.y(4))
+
+        # Bottom spacer for scroll
+        tk.Frame(inner, bg=BG, height=self.y(15)).pack()
+
+        # Update scroll region after content is rendered
+        def _update_scroll():
+            inner.update_idletasks()
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        inner.after(100, _update_scroll)
+
+        # --- Bottom home bar ---
         home_bar = tk.Frame(f, bg=CARD_BG, height=self.y(48))
         home_bar.place(x=0, y=H - self.y(48), width=W, height=self.y(48))
-        home_btn = tk.Label(home_bar, text="\u2302 Inicio",
-                            font=("Helvetica", self.fs(16), "bold"),
-                            fg=TEXT_SEC, bg=CARD_BG, cursor="hand2")
+        home_btn = tk.Label(
+            home_bar, text="\u2302 Inicio",
+            font=("Helvetica", self.fs(16), "bold"),
+            fg=TEXT_SEC, bg=CARD_BG, cursor="hand2",
+        )
         home_btn.place(relx=0.5, rely=0.5, anchor="center")
         home_btn.bind("<Button-1>", lambda e: self._go_home())
 
