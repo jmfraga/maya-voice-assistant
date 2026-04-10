@@ -524,6 +524,118 @@ def _send_weekly_reports(db: Database, telegram: "TelegramBot"):
     log.info("Reportes semanales enviados")
 
 
+_daily_summary_sent = {}  # {"YYYY-MM-DD": True}
+
+def _send_daily_summary(db: Database, telegram: "TelegramBot", weather_obj=None, search_obj=None):
+    """Send morning 'Mi dia' summary via Telegram to primary users. Once per day at ~8am."""
+    now = datetime.now()
+    today = now.strftime("%Y-%m-%d")
+
+    # Only send between 8:00 and 8:01 (the thread runs every 30s)
+    if now.hour != 8 or now.minute > 1:
+        return
+    if _daily_summary_sent.get(today):
+        return
+
+    _daily_summary_sent[today] = True
+    # Clean old entries
+    for k in list(_daily_summary_sent.keys()):
+        if k < today:
+            del _daily_summary_sent[k]
+
+    day_abbrevs = ["lun", "mar", "mie", "jue", "vie", "sab", "dom"]
+    days_es = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"]
+    months_es = ["", "enero", "febrero", "marzo", "abril", "mayo", "junio",
+                 "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+    today_abbrev = day_abbrevs[now.weekday()]
+
+    for user in db.get_users():
+        user_id = user["id"]
+        user_name = user["real_name"]
+        chat_id = user.get("telegram_chat_id")
+        if not chat_id:
+            continue
+
+        parts = []
+
+        # Greeting + date
+        parts.append(f"Buenos dias, {user_name}")
+        parts.append(f"Hoy es {days_es[now.weekday()]} {now.day} de {months_es[now.month]}")
+        parts.append("")
+
+        # Weather
+        if weather_obj and hasattr(weather_obj, 'data') and weather_obj.data:
+            wd = weather_obj.data
+            temp = wd.get("temp", "")
+            desc = wd.get("description", "")
+            feels = wd.get("feels_like", "")
+            w_line = f"Clima: {temp} grados, {desc}"
+            if feels:
+                w_line += f" (sensacion {feels} grados)"
+            parts.append(w_line)
+            parts.append("")
+
+        # Medications for today
+        all_meds = db.get_medications(user_id, active_only=True)
+        today_meds = []
+        sos_meds = []
+        for m in all_meds:
+            days = (m.get("days_of_week") or "").strip().lower()
+            if days == "sos":
+                sos_meds.append(m)
+            elif days == "" or today_abbrev in days:
+                today_meds.append(m)
+
+        if today_meds:
+            parts.append(f"Medicamentos de hoy ({len(today_meds)}):")
+            for m in today_meds:
+                line = f"  - {m['name']}"
+                if m.get("dosage"):
+                    line += f" ({m['dosage']})"
+                if m.get("schedule"):
+                    line += f" — {m['schedule']}"
+                parts.append(line)
+            parts.append("")
+
+        if sos_meds:
+            parts.append("Segun necesidad:")
+            for m in sos_meds:
+                line = f"  - {m['name']}"
+                if m.get("dosage"):
+                    line += f" ({m['dosage']})"
+                parts.append(line)
+            parts.append("")
+
+        # Reminders
+        reminders = db.get_pending_reminders(user_id)
+        if reminders:
+            parts.append("Recordatorios:")
+            for r in reminders[:5]:
+                parts.append(f"  - {r['remind_at']} — {r['text']}")
+            parts.append("")
+
+        # News (via Perplexity/search, brief)
+        if search_obj:
+            try:
+                news = search_obj.query("noticias mas importantes de Mexico hoy, maximo 3 titulares breves")
+                if news and len(news) > 20:
+                    parts.append("Noticias del dia:")
+                    # Truncate if too long
+                    if len(news) > 500:
+                        news = news[:500] + "..."
+                    parts.append(news)
+                    parts.append("")
+            except Exception as e:
+                log.warning("Error obteniendo noticias para resumen diario: %s", e)
+
+        parts.append("Que tengas un excelente dia. Aqui estoy si me necesitas.")
+
+        message = "\n".join(parts)
+        telegram.send_to_chat_id(chat_id, message)
+        log.info("Resumen diario enviado a %s via Telegram", user_name)
+
+
+
 def _check_user_activity(db: Database, tts: TTS, display: Display):
     """Check if any user hasn't interacted in a while. Proactive wellness check."""
     now = datetime.now()
@@ -569,7 +681,7 @@ def _check_user_activity(db: Database, tts: TTS, display: Display):
                 time.sleep(2)  # pause between users
 
 
-def reminder_thread(db: Database, tts: TTS, display: Display, telegram=None):
+def reminder_thread(db: Database, tts: TTS, display: Display, telegram=None, weather=None, search=None):
     """Background thread that checks for due reminders, medications, activity, and reports every 30s."""
     while running:
         try:
@@ -602,6 +714,11 @@ def reminder_thread(db: Database, tts: TTS, display: Display, telegram=None):
                 _send_weekly_reports(db, telegram)
             except Exception as e:
                 log.error("Error en weekly reports: %s", e)
+
+            try:
+                _send_daily_summary(db, telegram, weather_obj=weather, search_obj=search)
+            except Exception as e:
+                log.error("Error en daily summary: %s", e)
 
         # Sleep in small increments so we can exit quickly
         for _ in range(30):
@@ -1397,7 +1514,7 @@ def main():
 
     # Start reminder thread (includes med reminders, activity check, weekly reports)
     rem_thread = threading.Thread(
-        target=reminder_thread, args=(db, tts, display, telegram), daemon=True,
+        target=reminder_thread, args=(db, tts, display, telegram, weather, search), daemon=True,
     )
     rem_thread.start()
 
