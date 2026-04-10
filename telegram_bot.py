@@ -172,6 +172,7 @@ class TelegramBot:
                     {"command": "estado", "description": "Resumen del dia"},
                     {"command": "medicamentos", "description": "Medicamentos y tomas de hoy"},
                     {"command": "recordatorios", "description": "Recordatorios pendientes"},
+                    {"command": "reporte", "description": "Reporte detallado (admins)"},
                     {"command": "ayuda", "description": "Comandos disponibles"},
                 ]
             }, timeout=5.0)
@@ -243,6 +244,10 @@ class TelegramBot:
             self._cmd_ayuda(chat_id)
             return
 
+        if text in ("/reporte", "/report"):
+            self._cmd_reporte(chat_id)
+            return
+
         # Registration flow in progress
         if chat_id in self._conversations:
             self._continue_registration(chat_id, text)
@@ -308,10 +313,17 @@ class TelegramBot:
             self._handle_user_chat(chat_id, user, text)
             return
 
-        # Otherwise treat as family contact
+        # Otherwise treat as family contact — detect role
         contact = self._require_registered(chat_id)
         if not contact:
             return
+
+        # Determine role (admin or contact)
+        role = "contact"
+        if self.db and hasattr(self.db, 'get_contact_with_role'):
+            contact_info = self.db.get_contact_with_role(chat_id)
+            if contact_info:
+                role = contact_info.get("effective_role", "contact")
 
         if not self.llm:
             self.send_to_chat_id(chat_id, "Maya no esta disponible en este momento.")
@@ -323,7 +335,7 @@ class TelegramBot:
         # Get conversation history
         history = self.db.get_telegram_history(chat_id, limit=10)
 
-        # LLM response
+        # LLM response with role
         response, actions = self.llm.chat_telegram(
             text,
             contact_name=contact["name"],
@@ -331,6 +343,7 @@ class TelegramBot:
             db=self.db,
             user_ids=contact["user_ids"],
             chat_history=history,
+            role=role,
         )
 
         # Process actions
@@ -341,7 +354,7 @@ class TelegramBot:
         self.send_to_chat_id(chat_id, response)
 
     def _handle_user_chat(self, chat_id: int, user: dict, text: str):
-        """Handle chat from a Maya user — same experience as voice."""
+        """Handle chat from a Maya user — same experience as voice, with household context."""
         if not self.llm:
             self.send_to_chat_id(chat_id, "Maya no esta disponible en este momento.")
             return
@@ -352,13 +365,14 @@ class TelegramBot:
         # Save to regular conversations (same as voice)
         self.db.save_conversation(user_id, "user", text)
 
-        # Use the same chat method as voice
+        # Use chat with household context (includes other primary users)
         response, actions = self.llm.chat(
             text,
             user_name=user_name,
             db=self.db,
             user_id=user_id,
             weather=self.weather,
+            include_household=True,
         )
 
         # Process actions with user context
@@ -594,6 +608,7 @@ class TelegramBot:
             "/estado — Resumen del dia\n"
             "/medicamentos — Medicamentos y tomas de hoy\n"
             "/recordatorios — Recordatorios pendientes\n"
+            "/reporte — Reporte detallado (solo admins)\n"
             "/ayuda — Este mensaje\n\n"
             "<b>Tambien puedes:</b>\n"
             "- Escribir cualquier pregunta sobre tus seres queridos\n"

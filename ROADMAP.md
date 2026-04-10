@@ -77,6 +77,37 @@
 
 ---
 
+---
+
+## Sprint 3.7: Roles y Contexto por Nivel — COMPLETADO (2026-04-10)
+
+### Sistema de tres niveles de usuario
+- [x] Columna `role` en tabla contacts (admin/contact)
+- [x] Juan Manuel y Roberto marcados como admin
+- [x] Deteccion automatica de rol en routing de Telegram
+- [x] Metodos DB: `get_contact_with_role()`, `get_all_primary_users()`, `set_contact_role()`
+
+### Contexto diferenciado por rol
+- [x] **Admin**: meds con notas, compliance, esquemas de tratamiento, mediciones recientes, memorias completas (30), ultima interaccion, contactos
+- [x] **Primario**: su info completa + resumen de otros miembros del hogar (meds tomados, ultima interaccion)
+- [x] **Contacto**: meds basicos, compliance de hoy, recordatorios, memorias limitadas (10)
+- [x] `build_context_with_household()` para usuarios primarios en Telegram
+- [x] `chat()` acepta `include_household=True`
+
+### System prompts por rol
+- [x] Admin: tono informativo, instruccion explicita de dar info completa y detallada
+- [x] Primario: tono calido (sin cambios)
+- [x] Contacto: tono informativo breve
+
+### Synapse en chat_telegram()
+- [x] Soporte para provider Synapse con fallback chain (antes solo claude/openai)
+
+### Comando /reporte (solo admins)
+- [x] Reporte detallado: compliance de meds, esquemas, mediciones, recordatorios, ultima actividad
+- [x] Split automatico si excede 4096 chars de Telegram
+- [x] /ayuda actualizado con referencia a /reporte
+- [x] Menu de comandos del bot actualizado
+
 ## Pre-Onboarding con Papas
 
 ### Limpieza del test
@@ -224,6 +255,15 @@
 - [ ] Verificar rutinariamente que mic y altavoz BT estan activos
 - [ ] Si no responden, reconectar automaticamente (bluetoothctl + pw-play test)
 - [ ] Log/alerta si falla tras N reintentos
+
+### Check-ins proactivos por Telegram
+- [ ] Maya envia mensaje a usuarios primarios si llevan varias horas sin interaccion
+- [ ] Recordatorio por Telegram si medicamentos clave no confirmados pasada cierta hora
+- [ ] Check-in general a hora configurable ("Como va tu dia? Necesitas algo?")
+- [ ] Seguimiento post-medicion fuera de rango
+- [ ] Tono calido y natural, no alertas clinicas frias
+- [ ] Prerequisito: todos los primarios deben tener telegram_chat_id (papa pendiente)
+- [ ] Configurable: activar/desactivar por usuario desde admin
 
 ### Aprendizaje de patrones de rutina
 - [ ] Registrar timestamps de acciones del usuario (radio, medicamentos, clima, etc.) en DB

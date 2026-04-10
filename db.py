@@ -182,6 +182,9 @@ class Database:
             if "emergency" not in contact_cols:
                 conn.execute("ALTER TABLE contacts ADD COLUMN emergency INTEGER DEFAULT 0")
                 log.info("Columna emergency agregada a contacts")
+            if "role" not in contact_cols:
+                conn.execute("ALTER TABLE contacts ADD COLUMN role TEXT DEFAULT 'contact'")
+                log.info("Columna role agregada a contacts")
             # Medications migrations
             med_cols = [row[1] for row in conn.execute("PRAGMA table_info(medications)").fetchall()]
             if "sort_order" not in med_cols:
@@ -429,6 +432,38 @@ class Database:
         with self._conn() as conn:
             conn.execute("DELETE FROM contacts WHERE id = ?", (contact_id,))
 
+
+    def get_contact_with_role(self, chat_id: int) -> dict | None:
+        """Get contact info including role for a chat_id. Returns first match with aggregated user_ids."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM contacts WHERE telegram_chat_id = ? ORDER BY id",
+                (chat_id,),
+            ).fetchall()
+            if not rows:
+                return None
+            first = dict(rows[0])
+            first["user_ids"] = list({r["user_id"] for r in rows})
+            # Role is the highest among all entries (admin > contact)
+            roles = [r["role"] or "contact" for r in rows]
+            first["effective_role"] = "admin" if "admin" in roles else "contact"
+            return first
+
+    def get_all_primary_users(self) -> list[dict]:
+        """Get all users (they are all primary users by definition)."""
+        return self.get_users()
+
+    def set_contact_role(self, contact_id: int, role: str):
+        """Set role for a contact (admin or contact)."""
+        with self._conn() as conn:
+            conn.execute("UPDATE contacts SET role = ? WHERE id = ?", (role, contact_id))
+            log.info("Contact %d role set to %s", contact_id, role)
+
+    def set_contact_role_by_chat_id(self, chat_id: int, role: str):
+        """Set role for all contact entries with this chat_id."""
+        with self._conn() as conn:
+            conn.execute("UPDATE contacts SET role = ? WHERE telegram_chat_id = ?", (role, chat_id))
+            log.info("All contacts with chat_id=%d set to role=%s", chat_id, role)
     # --- Reminders ---
     def add_reminder(self, user_id: str, text: str, remind_at: str,
                      recurring: str = "") -> int:

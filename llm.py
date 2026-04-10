@@ -200,11 +200,45 @@ class LLM:
 
         return "\n".join(parts)
 
+
+    def build_context_with_household(self, user_name: str, user_id: str, db=None,
+                                      weather=None) -> str:
+        """Build context for a primary user, including basic info about other household members."""
+        # Start with their own full context
+        context = self.build_context(user_name, db, user_id, weather=weather)
+
+        if db:
+            # Add basic info about other primary users in the household
+            all_users = db.get_all_primary_users()
+            today = datetime.now().strftime("%Y-%m-%d")
+            other_parts = []
+            for u in all_users:
+                if u["id"] == user_id:
+                    continue
+                other_name = u["real_name"]
+                meds = db.get_medications(u["id"])
+                med_log = db.get_medication_log(u["id"], date=today)
+                total = len(meds)
+                taken = len(med_log) if med_log else 0
+                other_parts.append(f"{other_name}: {taken}/{total} medicamentos tomados hoy")
+                # Last interaction
+                history = db.get_recent_conversations(u["id"], limit=1)
+                if history:
+                    other_parts.append(f"  Ultima interaccion: {history[-1]['created_at']}")
+
+            if other_parts:
+                context += "\n\nOtros miembros del hogar:\n" + "\n".join(other_parts)
+
+        return context
+
     def chat(self, user_text: str, user_name: str = "Usuario",
              db=None, user_id: str | None = None,
-             weather=None) -> tuple[str, list[dict]]:
+             weather=None, include_household: bool = False) -> tuple[str, list[dict]]:
         """Send message to LLM, return (response_text, actions)."""
-        context = self.build_context(user_name, db, user_id, weather=weather)
+        if include_household and db and user_id:
+            context = self.build_context_with_household(user_name, user_id, db=db, weather=weather)
+        else:
+            context = self.build_context(user_name, db, user_id, weather=weather)
         prompt_parts = [p for p in [self.personality, self.system_prompt] if p]
         system = "\n\n".join(prompt_parts) + f"\n\n--- Contexto ---\n{context}"
 
@@ -240,6 +274,69 @@ class LLM:
                             log.error("Error LLM fallback %s: %s", self.fallback_provider, e2)
 
         return "Disculpe, tuve un problema. ¿Puede repetir?", []
+
+
+    def generate_report(self, db=None) -> str:
+        """Generate a detailed report of all primary users for admins."""
+        if not db:
+            return "No hay datos disponibles."
+
+        today = datetime.now().strftime("%Y-%m-%d")
+        now = datetime.now()
+        parts = [f"📋 Reporte Maya — {_fecha_es(now)}\n"]
+
+        all_users = db.get_all_primary_users()
+        for user in all_users:
+            uid = user["id"]
+            uname = user["real_name"]
+            parts.append(f"━━━ {uname} ━━━")
+
+            # Medication compliance
+            meds = db.get_medications(uid)
+            med_log = db.get_medication_log(uid, date=today)
+            taken_names = {ml["med_name"] for ml in (med_log or [])}
+            total = len(meds)
+            taken = len(med_log) if med_log else 0
+            parts.append(f"\nMedicamentos ({taken}/{total}):")
+            for m in meds:
+                check = "✅" if m["name"] in taken_names else "⬜"
+                days = (m.get('days_of_week') or '').strip()
+                days_str = f" [{days}]" if days else ""
+                parts.append(f"  {check} {m['name']} — {m['dosage']}, {m['schedule']}{days_str}")
+
+            # Treatment schemas + recent measurements
+            schemas = db.get_treatment_schemas(uid)
+            if schemas:
+                parts.append("\nEsquemas de tratamiento:")
+                for schema in schemas:
+                    parts.append(f"  {schema['name']} ({schema['measurement_name']})")
+                    try:
+                        measurements = db.get_measurement_log(uid, schema_id=schema["id"], limit=3)
+                        if measurements:
+                            for ml in measurements:
+                                parts.append(f"    {ml['measurement_value']} {schema['measurement_unit']} "
+                                             f"→ {ml.get('dose_given','')} {ml.get('dose_unit','')} "
+                                             f"({ml['measured_at'][:16]})")
+                    except Exception:
+                        pass
+
+            # Pending reminders
+            reminders = db.get_pending_reminders(uid)
+            if reminders:
+                parts.append("\nRecordatorios pendientes:")
+                for r in reminders:
+                    parts.append(f"  ⏰ {r['remind_at']} — {r['text']}")
+
+            # Last interaction
+            history = db.get_recent_conversations(uid, limit=1)
+            if history:
+                parts.append(f"\nUltima interaccion: {history[-1]['created_at']}")
+            else:
+                parts.append("\nSin interacciones registradas")
+
+            parts.append("")
+
+        return "\n".join(parts)
 
     def _chat_synapse(self, system: str, user_text: str) -> str:
         """Chat via Synapse (OpenAI-compatible with Smart Route)."""
@@ -293,88 +390,182 @@ class LLM:
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"]
 
-    def chat_telegram(self, text: str, contact_name: str, relationship: str,
-                      db=None, user_ids: list[str] = None,
-                      chat_history: list[dict] = None) -> tuple[str, list[dict]]:
-        """Chat with a family member via Telegram about their loved one(s)."""
-        context_parts = [
-            f"Hablando con: {contact_name} ({relationship})",
-            f"Fecha y hora: {_fecha_es(datetime.now())}",
-        ]
-
+    def _build_telegram_context(self, db, user_ids: list[str], role: str = "contact") -> tuple[list[str], list[str]]:
+        """Build context parts for Telegram chat based on role. Returns (context_parts, user_names)."""
+        context_parts = []
         user_names = []
-        if db and user_ids:
-            for uid in user_ids:
-                user = db.get_user(uid)
-                if not user:
-                    continue
-                uname = user["real_name"]
-                user_names.append(uname)
-                context_parts.append(f"\n--- Informacion de {uname} ---")
+        if not db or not user_ids:
+            return context_parts, user_names
 
-                meds = db.get_medications(uid)
-                if meds:
-                    context_parts.append(f"Medicamentos de {uname}:")
-                    for m in meds:
-                        context_parts.append(f"  - {m['name']}: {m['dosage']}, horario: {m['schedule']}")
+        today = datetime.now().strftime("%Y-%m-%d")
 
-                today = datetime.now().strftime("%Y-%m-%d")
-                med_log = db.get_medication_log(uid, date=today)
-                if med_log:
-                    taken = [f"{ml['med_name']} ({ml['taken_at'][-5:]})" for ml in med_log]
-                    context_parts.append(f"Medicamentos tomados hoy: {', '.join(taken)}")
+        for uid in user_ids:
+            user = db.get_user(uid)
+            if not user:
+                continue
+            uname = user["real_name"]
+            user_names.append(uname)
+            context_parts.append(f"\n--- Informacion de {uname} ---")
 
-                reminders = db.get_pending_reminders(uid)
-                if reminders:
-                    rem_list = ", ".join(f"{r['text']} a las {r['remind_at']}" for r in reminders)
-                    context_parts.append(f"Recordatorios: {rem_list}")
+            # Medications (all roles)
+            meds = db.get_medications(uid)
+            if meds:
+                context_parts.append(f"Medicamentos de {uname}:")
+                for m in meds:
+                    days = (m.get('days_of_week') or '').strip()
+                    if days.lower() == 'sos':
+                        days_str = ", segun necesidad"
+                    elif days:
+                        days_str = f", dias: {days}"
+                    else:
+                        days_str = ""
+                    line = f"  - {m['name']}: {m['dosage']}, horario: {m['schedule']}{days_str}"
+                    if m.get('notes') and role == 'admin':
+                        line += f" (nota: {m['notes']})"
+                    context_parts.append(line)
 
-                memories = db.get_memories(uid, limit=20)
-                if memories:
-                    context_parts.append(f"Memorias de {uname}:")
-                    for mem in memories:
-                        context_parts.append(f"  - [{mem['category']}] {mem['content']}")
+            # Medication compliance today (all roles)
+            med_log = db.get_medication_log(uid, date=today)
+            if med_log:
+                taken = [f"{ml['med_name']} ({ml['taken_at'][-5:]})" for ml in med_log]
+                context_parts.append(f"Medicamentos tomados hoy: {', '.join(taken)}")
+            total_meds = len(meds)
+            taken_count = len(med_log) if med_log else 0
+            context_parts.append(f"Cumplimiento hoy: {taken_count}/{total_meds} medicamentos tomados")
 
+            # Treatment schemas (admin only)
+            if role == 'admin':
+                schemas = db.get_treatment_schemas(uid)
+                for schema in schemas:
+                    ranges = db.get_treatment_ranges(schema["id"])
+                    if ranges:
+                        unit = schema["measurement_unit"]
+                        context_parts.append(f"Esquema de tratamiento: {schema['name']} (segun {schema['measurement_name']})")
+                        for r in ranges:
+                            context_parts.append(f"  {r['range_min']}-{r['range_max']}{unit} -> {r['dose']} {r['dose_unit']}")
+                        if schema["alert_low"] is not None or schema["alert_high"] is not None:
+                            context_parts.append(f"  Alerta si <{schema['alert_low']} o >{schema['alert_high']}")
+
+                # Recent measurements (admin only)
+                try:
+                    measurements = db.get_measurement_log(uid, limit=5)
+                    if measurements:
+                        context_parts.append(f"Mediciones recientes de {uname}:")
+                        for ml in measurements:
+                            context_parts.append(f"  - {ml.get('schema_name','')}: {ml['measurement_value']} "
+                                                 f"{ml.get('measurement_unit','')} ({ml['measured_at'][:16]})")
+                except Exception:
+                    pass
+
+            # Reminders (all roles)
+            reminders = db.get_pending_reminders(uid)
+            if reminders:
+                rem_list = ", ".join(f"{r['text']} a las {r['remind_at']}" for r in reminders)
+                context_parts.append(f"Recordatorios pendientes: {rem_list}")
+
+            # Memories (admin gets all, contact gets limited)
+            mem_limit = 30 if role == 'admin' else 10
+            memories = db.get_memories(uid, limit=mem_limit)
+            if memories:
+                context_parts.append(f"Memorias de {uname}:")
+                for mem in memories:
+                    context_parts.append(f"  - [{mem['category']}] {mem['content']}")
+
+            # Last interaction (admin only)
+            if role == 'admin':
+                history = db.get_recent_conversations(uid, limit=1)
+                if history:
+                    last = history[-1]
+                    context_parts.append(f"Ultima interaccion por voz: {last['created_at']}")
+
+            # Contacts (admin gets full list)
+            if role == 'admin':
                 contacts = db.get_contacts(uid)
                 if contacts:
                     contact_list = ", ".join(f"{c['name']} ({c['relationship']})" for c in contacts)
                     context_parts.append(f"Contactos: {contact_list}")
 
+        return context_parts, user_names
+
+    def chat_telegram(self, text: str, contact_name: str, relationship: str,
+                      db=None, user_ids: list[str] = None,
+                      chat_history: list[dict] = None,
+                      role: str = "contact") -> tuple[str, list[dict]]:
+        """Chat with a family member or admin via Telegram about their loved one(s)."""
+        context_parts = [
+            f"Hablando con: {contact_name} ({relationship})",
+            f"Fecha y hora: {_fecha_es(datetime.now())}",
+        ]
+
+        telegram_context, user_names = self._build_telegram_context(db, user_ids, role)
+        context_parts.extend(telegram_context)
+
         if chat_history:
             context_parts.append("\nConversacion reciente en Telegram:")
             for msg in chat_history:
-                role = contact_name if msg["role"] == "user" else self.assistant_name
-                context_parts.append(f"  {role}: {msg['content'][:300]}")
+                r = contact_name if msg["role"] == "user" else self.assistant_name
+                context_parts.append(f"  {r}: {msg['content'][:300]}")
 
         context = "\n".join(context_parts)
         users_str = " y ".join(user_names) if user_names else "los usuarios"
 
-        system = (
-            f"Eres {self.assistant_name}, asistente virtual de la familia. "
-            f"Estas hablando por Telegram con {contact_name}, quien es {relationship} de {users_str}.\n\n"
-            f"Tu rol es:\n"
-            f"- Informar sobre el estado, medicamentos, recordatorios y bienestar de {users_str}\n"
-            f"- Recibir mensajes para entregar a {users_str} cuando hablen contigo por voz\n"
-            f"- Ser calida, concisa y tranquilizadora\n\n"
-            f"Si {contact_name} quiere enviar un mensaje a alguno de los usuarios, usa:\n"
-            f"[ACCION:MENSAJE_PENDIENTE:el mensaje a entregar]\n\n"
-            f"Responde siempre en espanol mexicano, de forma breve y util.\n\n"
-            f"--- Contexto ---\n{context}"
-        )
+        if role == "admin":
+            system = (
+                f"Eres {self.assistant_name}, asistente virtual de la familia. "
+                f"Estas hablando por Telegram con {contact_name}, quien es {relationship} de {users_str} "
+                f"y es ADMINISTRADOR del cuidado de {users_str}.\n\n"
+                f"Tu rol con administradores:\n"
+                f"- Dar informacion COMPLETA y DETALLADA sobre medicamentos, dosis, horarios y cumplimiento\n"
+                f"- Reportar esquemas de tratamiento, mediciones y alertas\n"
+                f"- Informar sobre el estado general, memorias relevantes y ultima actividad\n"
+                f"- Responder preguntas clinicas con los datos que tienes (sin dar consejo medico propio)\n"
+                f"- Recibir mensajes para entregar a {users_str} por voz\n\n"
+                f"IMPORTANTE: Tienes acceso COMPLETO a los datos de medicamentos, dosis, horarios, "
+                f"esquemas de tratamiento y memorias. Cuando te pregunten, responde con los datos del contexto.\n\n"
+                f"Si {contact_name} quiere enviar un mensaje a alguno de los usuarios, usa:\n"
+                f"[ACCION:MENSAJE_PENDIENTE:el mensaje a entregar]\n\n"
+                f"Responde en espanol mexicano, de forma clara y completa.\n\n"
+                f"--- Contexto ---\n{context}"
+            )
+        else:
+            system = (
+                f"Eres {self.assistant_name}, asistente virtual de la familia. "
+                f"Estas hablando por Telegram con {contact_name}, quien es {relationship} de {users_str}.\n\n"
+                f"Tu rol es:\n"
+                f"- Informar sobre el estado, medicamentos, recordatorios y bienestar de {users_str}\n"
+                f"- Recibir mensajes para entregar a {users_str} cuando hablen contigo por voz\n"
+                f"- Ser calida, concisa y tranquilizadora\n\n"
+                f"Si {contact_name} quiere enviar un mensaje a alguno de los usuarios, usa:\n"
+                f"[ACCION:MENSAJE_PENDIENTE:el mensaje a entregar]\n\n"
+                f"Responde siempre en espanol mexicano, de forma breve y util.\n\n"
+                f"--- Contexto ---\n{context}"
+            )
 
-        try:
-            if self.provider == "claude":
-                full_text = self._chat_claude(system, text)
-            elif self.provider == "openai":
-                full_text = self._chat_openai(system, text)
-            else:
-                return "Proveedor LLM no configurado.", []
+        providers = {
+            "synapse": self._chat_synapse,
+            "claude": self._chat_claude,
+            "openai": self._chat_openai,
+        }
 
-            clean_text, actions = parse_actions(full_text)
-            if actions:
-                log.info("Telegram acciones: %s", [a["type"] for a in actions])
-            return clean_text, actions
+        primary_fn = providers.get(self.provider)
+        if primary_fn:
+            try:
+                full_text = primary_fn(system, text)
+                clean_text, actions = parse_actions(full_text)
+                if actions:
+                    log.info("Telegram acciones: %s", [a["type"] for a in actions])
+                return clean_text, actions
+            except Exception as e:
+                log.error("Error LLM telegram %s: %s", self.provider, e)
+                if self.fallback_provider:
+                    fallback_fn = providers.get(self.fallback_provider)
+                    if fallback_fn:
+                        try:
+                            log.info("Telegram fallback LLM: %s", self.fallback_provider)
+                            full_text = fallback_fn(system, text)
+                            clean_text, actions = parse_actions(full_text)
+                            return clean_text, actions
+                        except Exception as e2:
+                            log.error("Error LLM telegram fallback: %s", e2)
 
-        except Exception as e:
-            log.error("Error LLM telegram: %s", e)
-            return "Disculpa, tuve un problema. Intenta de nuevo.", []
+        return "Disculpa, tuve un problema. Intenta de nuevo.", []
