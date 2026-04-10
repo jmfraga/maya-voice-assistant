@@ -1102,6 +1102,188 @@ def _is_cancel(text: str) -> bool:
     return t in _CANCEL_PHRASES
 
 
+
+# --- Direct commands (bypass LLM for low latency) ---
+
+_RADIO_PLAY_PATTERNS = [
+    r"^(?:pon(?:me|le)?|prende|enciende)\s+(?:la\s+)?(?:radio|musica|música)(?:\s+(.+))?$",
+    r"^(?:pon(?:me|le)?)\s+(?:la\s+)?(.+)$",  # "pon la romántica"
+]
+_RADIO_STOP_PATTERNS = [
+    r"^(?:apaga|quita|para|detén|deten|silencia)\s+(?:la\s+)?(?:radio|musica|música)$",
+    r"^(?:apaga|quita)\s+(?:la\s+)?(.+)$",  # "apaga la romántica"
+]
+_TIME_PATTERNS = [
+    r"^qu[ée]\s+hora\s+(?:es|son)$",
+    r"^(?:dime\s+)?la\s+hora$",
+]
+_DATE_PATTERNS = [
+    r"^qu[ée]\s+(?:d[ií]a|fecha)\s+(?:es|tenemos)(?:\s+hoy)?$",
+    r"^(?:a\s+)?qu[ée]\s+(?:estamos|d[ií]a\s+estamos)$",
+]
+_WEATHER_PATTERNS = [
+    r"^(?:c[oó]mo\s+est[aá]\s+el\s+(?:clima|tiempo))$",
+    r"^qu[ée]\s+(?:temperatura|clima)\s+(?:hace|hay|tenemos)$",
+]
+
+_STATION_ALIASES = {
+    "romantica": ["romantica", "romántica", "baladas", "romanticas", "románticas"],
+    "clasica": ["clasica", "clásica", "clasicas", "clásicas"],
+    "noticias": ["noticias", "formula", "fórmula", "radio formula"],
+    "ranchera": ["ranchera", "rancheras", "mexicana", "mexicanas"],
+    "instrumental": ["instrumental", "piano", "guitarra"],
+}
+
+
+def _match_station(text: str) -> str | None:
+    """Try to match text to a radio station key."""
+    t = text.lower().strip()
+    for key, aliases in _STATION_ALIASES.items():
+        for alias in aliases:
+            if alias in t:
+                return key
+    return None
+
+
+def _try_direct_command(text: str, radio, display, weather_obj, tts_fn, play_fn) -> str | None:
+    """Try to handle text as a direct command without LLM.
+
+    Returns a response string if handled, None if should go to LLM.
+    """
+    t = text.lower().strip().rstrip(".,!?\u00bf\u00a1")
+
+    # --- Radio play ---
+    for pattern in _RADIO_PLAY_PATTERNS:
+        m = re.match(pattern, t)
+        if m:
+            station_hint = m.group(1) if m.lastindex else None
+            if station_hint:
+                key = _match_station(station_hint)
+            else:
+                key = "romantica"  # default station
+            if key and radio:
+                name = radio.play(key)
+                if name:
+                    display.set_radio(name)
+                    return f"Poniendo {name}"
+            # Could not match station — let LLM handle
+            return None
+
+    # --- Radio stop ---
+    for pattern in _RADIO_STOP_PATTERNS:
+        if re.match(pattern, t):
+            if radio:
+                radio.stop()
+                display.set_radio(None)
+            return "Listo, radio apagada"
+
+    # --- Time ---
+    for pattern in _TIME_PATTERNS:
+        if re.match(pattern, t):
+            now = datetime.now()
+            hour = now.hour
+            minute = now.minute
+            if minute == 0:
+                return f"Son las {hour} en punto"
+            else:
+                return f"Son las {hour} con {minute} minutos"
+
+    # --- Date ---
+    for pattern in _DATE_PATTERNS:
+        if re.match(pattern, t):
+            now = datetime.now()
+            days = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"]
+            months = ["", "enero", "febrero", "marzo", "abril", "mayo", "junio",
+                      "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+            return f"Hoy es {days[now.weekday()]} {now.day} de {months[now.month]} de {now.year}"
+
+    # --- Weather ---
+    for pattern in _WEATHER_PATTERNS:
+        if re.match(pattern, t):
+            if weather_obj and hasattr(weather_obj, 'data') and weather_obj.data:
+                wd = weather_obj.data
+                temp = wd.get("temp", "")
+                desc = wd.get("description", "")
+                feels = wd.get("feels_like", "")
+                resp = f"El clima esta a {temp} grados, {desc}"
+                if feels:
+                    resp += f", sensacion termica de {feels} grados"
+                return resp
+            return None  # no weather data, let LLM try
+
+    return None  # not a direct command
+
+
+# --- Morning greeting ---
+
+_morning_greeted_today = {}  # {user_id: "YYYY-MM-DD"}
+
+DAYS_ES = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"]
+MONTHS_ES = ["", "enero", "febrero", "marzo", "abril", "mayo", "junio",
+             "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+
+
+def _should_greet_morning(user_id: str) -> bool:
+    """Check if this is the first interaction of the morning for this user."""
+    now = datetime.now()
+    if now.hour >= 12:
+        return False  # only greet in the morning
+    today = now.strftime("%Y-%m-%d")
+    if _morning_greeted_today.get(user_id) == today:
+        return False
+    return True
+
+
+def _build_morning_greeting(user_id: str, user_name: str, db_obj, weather_obj) -> str:
+    """Build a warm morning greeting with day summary."""
+    now = datetime.now()
+    today = now.strftime("%Y-%m-%d")
+
+    # Mark as greeted
+    _morning_greeted_today[user_id] = today
+
+    parts = [f"Buenos dias, {user_name}"]
+
+    # Date
+    parts.append(f"Hoy es {DAYS_ES[now.weekday()]} {now.day} de {MONTHS_ES[now.month]}")
+
+    # Weather
+    if weather_obj and hasattr(weather_obj, 'data') and weather_obj.data:
+        wd = weather_obj.data
+        temp = wd.get("temp", "")
+        desc = wd.get("description", "")
+        if temp and desc:
+            parts.append(f"El clima esta a {temp} grados, {desc}")
+
+    # Medications for today
+    if db_obj:
+        all_meds = db_obj.get_medications(user_id, active_only=True)
+        day_abbrevs = ["lun", "mar", "mie", "jue", "vie", "sab", "dom"]
+        today_abbrev = day_abbrevs[now.weekday()]
+        today_meds = []
+        for m in all_meds:
+            days = (m.get("days_of_week") or "").strip().lower()
+            if days == "sos":
+                continue
+            if days == "" or today_abbrev in days:
+                today_meds.append(m)
+
+        if today_meds:
+            parts.append(f"Tienes {len(today_meds)} medicamentos programados para hoy")
+
+    # Reminders
+    if db_obj:
+        reminders = db_obj.get_pending_reminders(user_id)
+        if reminders:
+            if len(reminders) == 1:
+                parts.append(f"y un recordatorio: {reminders[0]['text']} a las {reminders[0]['remind_at']}")
+            else:
+                parts.append(f"y {len(reminders)} recordatorios pendientes")
+
+    return ". ".join(parts) + "."
+
+
+
 def main():
     global wakeword_detector, running
 
@@ -1353,6 +1535,17 @@ def main():
                         db.mark_message_delivered(pm["id"])
                         time.sleep(0.5)
 
+            # d3. Morning greeting (first interaction of the day, before noon)
+            if user_id and _should_greet_morning(user_id):
+                greeting = _build_morning_greeting(user_id, user_name, db, weather)
+                log.info("Saludo matutino para %s: %s", user_name, greeting[:80])
+                display.set_response(greeting)
+                greeting_path = tts.speak(greeting)
+                if greeting_path:
+                    play_audio(greeting_path)
+                    os.unlink(greeting_path)
+                time.sleep(0.3)
+
             # e. Transcribe
             display.set_status("Procesando...", "#f0a500")
             wav_path = save_wav(audio, audio_cfg.get("sample_rate", 16000))
@@ -1380,6 +1573,26 @@ def main():
                 display.active_user_id = None
                 display.show_main()
                 if radio_was_playing and not radio.playing:
+                    name = radio.play(radio_was_playing)
+                    if name:
+                        display.set_radio(name)
+                continue
+
+            # f1b. Direct commands (bypass LLM for low latency)
+            direct_response = _try_direct_command(
+                text, radio, display, weather, tts.speak, play_audio,
+            )
+            if direct_response:
+                log.info("Comando directo: '%s' -> '%s'", text, direct_response)
+                display.set_response(direct_response)
+                direct_path = tts.speak(direct_response)
+                if direct_path:
+                    play_audio(direct_path)
+                    os.unlink(direct_path)
+                display.active_user_id = None
+                display.show_main()
+                # Resume radio if it was playing and we didn't change it
+                if radio_was_playing and not radio.playing and "radio" not in text.lower():
                     name = radio.play(radio_was_playing)
                     if name:
                         display.set_radio(name)
