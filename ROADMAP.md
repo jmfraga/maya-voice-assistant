@@ -142,7 +142,7 @@
 - [x] Layout adaptable de botones: 2 usuarios → grandes centrados (350px max), 3+ → divide parejo
 - [x] Animacion de escucha: 7 barras ecualizador sinusoidal sobre area de transcript
 - [ ] Pantalla "Mi dia": resumen matutino (clima, meds pendientes, recordatorios)
-- [ ] Fotos de usuarios en botones (data/photos/)
+- [x] Fotos de usuarios en botones (data/photos/) (2026-03-18)
 
 ### Mejoras de voz
 - [ ] Speaker ID: habilitar en produccion (resemblyzer en Pi)
