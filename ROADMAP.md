@@ -190,13 +190,13 @@
 
 ### Barge-in y comandos directos
 - [x] **Barge-in**: "Oye Maya" durante TTS detiene playback y reanuda escucha (2026-03-18)
-- [ ] **Comandos directos sin LLM**: "pon musica", "apaga radio", "para", "cancela" → bypass LLM para baja latencia
-- [ ] **Early intent detection**: clasificar intent antes de enviar a LLM para comandos claros
+- [x] **Comandos directos sin LLM**: radio play/stop, hora, fecha, clima → bypass LLM (~0.5s vs ~3-5s) (2026-04-10)
+- [x] **Early intent detection**: regex matching para comandos directos antes de LLM (2026-04-10)
 - [x] **"Maya cancela" / "Maya olvidalo"**: deteccion de frases de cancelacion en STT, sale de conversacion (2026-03-18)
 
 ### Saludo matutino contextualizado
-- [ ] Maya saluda automaticamente al primer usuario que interactua en la manana
-- [ ] Resumen hablado: clima, medicamentos pendientes, recordatorios del dia, citas
+- [x] Maya saluda automaticamente al primer usuario que interactua en la manana (2026-04-10)
+- [x] Resumen hablado: clima, medicamentos del dia, recordatorios (2026-04-10)
 - [ ] Configurable como "despertador inteligente" (hora fija o al detectar movimiento/voz)
 
 ### Analytics en admin
