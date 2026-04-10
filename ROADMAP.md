@@ -141,7 +141,7 @@
 ### Mejoras de display
 - [x] Layout adaptable de botones: 2 usuarios → grandes centrados (350px max), 3+ → divide parejo
 - [x] Animacion de escucha: 7 barras ecualizador sinusoidal sobre area de transcript
-- [ ] Pantalla "Mi dia": resumen matutino (clima, meds pendientes, recordatorios)
+- [x] Pantalla "Mi dia": resumen matutino con scroll, filtro por dia, tono calido (2026-04-10)
 - [x] Fotos de usuarios en botones (data/photos/) (2026-03-18)
 
 ### Mejoras de voz
